@@ -98,6 +98,11 @@ export interface AnswerStartMessage {
   type: "answer_start";
 }
 
+export interface HighlightsMessage {
+  type: "highlights";
+  highlights: Highlight[];
+}
+
 export interface AnswerEndMessage {
   type: "answer_end";
   text: string;
@@ -108,6 +113,7 @@ export type ServerMessage =
   | TranscriptMessage
   | ScreenshotRequestMessage
   | AnswerStartMessage
+  | HighlightsMessage
   | AnswerEndMessage
   | ErrorMessage
   | CancelledMessage;

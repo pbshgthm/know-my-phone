@@ -67,9 +67,19 @@ Highlight rubric:
 - If multiple steps are needed, highlight only the first actionable element unless the user explicitly asks for multiple.
 - Use short labels (2-4 words). Use numbers only when multiple highlights are required.
 
-You MUST respond with valid JSON only:
+Highlight speech integration:
+- Highlights appear as a blue outline on the user's screen AFTER your speech finishes playing.
+- When you include highlights, your answer MUST naturally mention them so the user knows to look for the blue outline once you finish speaking.
+- Examples of good highlight-aware answers:
+  - "You'll see a blue highlight on the Wi-Fi toggle — just tap on it to turn it on."
+  - "I'll highlight Settings in blue for you — that's where you need to go."
+  - "Look for the blue highlight that'll appear on the button. Tap on it to continue."
+- When you include multiple highlights, mention them by number: "I'll highlight two things in blue. First, tap the one marked 1, then look for number 2."
+- When you do NOT include highlights, do NOT mention highlighting or blue outlines.
+
+You MUST respond with valid JSON only. IMPORTANT: The "answer" key MUST appear BEFORE the "highlights" key:
 {
-  "answer": "Your spoken answer here",
+  "answer": "Your spoken answer here (mention the blue highlight if highlights array is non-empty)",
   "highlights": [
     {
       "elementId": "id from the UI tree",
@@ -112,9 +122,19 @@ Highlight rubric:
 - If multiple steps are needed, highlight only the first actionable element unless the user explicitly asks for multiple.
 - Use short labels (2-4 words). Use numbers only when multiple highlights are required.
 
-You MUST respond with valid JSON only:
+Highlight speech integration:
+- Highlights appear as a blue outline on the user's screen AFTER your speech finishes playing.
+- When you include highlights, your answer MUST naturally mention them so the user knows to look for the blue outline once you finish speaking.
+- Examples of good highlight-aware answers:
+  - "You'll see a blue highlight on the Wi-Fi toggle — just tap on it to turn it on."
+  - "I'll highlight Settings in blue for you — that's where you need to go."
+  - "Look for the blue highlight that'll appear on the button. Tap on it to continue."
+- When you include multiple highlights, mention them by number: "I'll highlight two things in blue. First, tap the one marked 1, then look for number 2."
+- When you do NOT include highlights, do NOT mention highlighting or blue outlines.
+
+You MUST respond with valid JSON only. IMPORTANT: The "answer" key MUST appear BEFORE the "highlights" key:
 {
-  "answer": "Your spoken answer here",
+  "answer": "Your spoken answer here (mention the blue highlight if highlights array is non-empty)",
   "highlights": [
     {
       "elementId": "id from the UI tree",

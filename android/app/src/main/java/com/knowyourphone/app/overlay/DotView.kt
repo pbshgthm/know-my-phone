@@ -5,79 +5,84 @@ import android.content.Context
 import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 import android.util.TypedValue
 import android.view.View
 import android.view.animation.LinearInterpolator
 import androidx.core.graphics.PathParser
+import com.knowyourphone.app.i18n.LanguageManager
+import com.knowyourphone.app.i18n.PillStrings
 import com.knowyourphone.app.state.AssistantState
 import kotlin.math.pow
+import kotlin.math.sin
 
 class DotView(context: Context) : View(context) {
     companion object {
         const val DOT_SIZE_DP = 68
         private const val PILL_HEIGHT_DP = 48f
-        private const val PILL_WIDTH_DP = 212f
-        private const val SHADOW_PAD_DP = 6f
+        private const val PILL_WIDTH_DP = 188f
+        private const val SHADOW_PAD_DP = 8f
         private const val ICON_SIZE_DP = 20f
         private const val ICON_STROKE_DP = 2f
         private const val INLINE_TEXT_ICON_SIZE_DP = 14f
         private const val INLINE_TEXT_ICON_STROKE_DP = 1.35f
         private const val INLINE_TEXT_ICON_GAP_DP = 4f
 
-        private const val COLOR_WHITE = Color.WHITE
-        private const val COLOR_ICON = 0xFF1F1F1F.toInt()
-        private const val COLOR_ICON_MUTED = 0xFF6B6B6B.toInt()
-        private const val COLOR_BORDER = 0x22000000
-        private const val COLOR_DISCONNECTED = 0xFF2B2B2B.toInt()
-        private const val COLOR_RECONNECTING = 0xFF5A5A5A.toInt()
-
-        private const val IDLE_TEXT_PREFIX = "Tap"
-        private const val IDLE_TEXT_SUFFIX = "to talk"
+        // Dark pill palette
+        private const val COLOR_PILL_BG_START = 0xFF08080F.toInt()
+        private const val COLOR_PILL_BG_END = 0xFF1E1E38.toInt()
+        private const val COLOR_OUTLINE = 0xFF8888A0.toInt()
+        private const val COLOR_TEXT = 0xFFD4D4DC.toInt()
+        private const val COLOR_TEXT_MUTED = 0xFF8888A0.toInt()
+        private const val COLOR_DISCONNECTED = 0xFFEF4444.toInt()
+        private const val COLOR_RECONNECTING = 0xFFFBBF24.toInt()
     }
 
     enum class ConnectionState { CONNECTED, DISCONNECTED, RECONNECTING }
     enum class PillAction { MIC_ICON, X_BUTTON, CONFIRM, NONE }
 
+    private var pillStrings: PillStrings = PillStrings("Tap", "to talk", "Thinking", "Share screen")
+
     private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.argb(50, 0, 0, 0)
+        color = Color.argb(100, 0, 0, 0)
         maskFilter = BlurMaskFilter(dp(SHADOW_PAD_DP), BlurMaskFilter.Blur.NORMAL)
     }
 
     private val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = COLOR_WHITE
+    }
+
+    private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.5f)
+        color = COLOR_OUTLINE
     }
 
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dp(ICON_STROKE_DP)
-        color = COLOR_ICON
+        color = COLOR_TEXT
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = COLOR_ICON
+        color = COLOR_TEXT
         textSize = dp(14f)
-    }
-
-    private val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = dp(1f)
-        color = COLOR_BORDER
     }
 
     private val eqBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dp(2.2f)
         strokeCap = Paint.Cap.ROUND
-        color = COLOR_ICON
     }
 
     private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -86,20 +91,29 @@ class DotView(context: Context) : View(context) {
 
     private val circleStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dp(2f)
+        strokeWidth = dp(1.5f)
     }
 
     private val statusDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
 
-    // State-specific circle colors
-    private val circleColorIdle = 0xFF4B5563.toInt()
-    private val circleColorListening = 0xFF3B82F6.toInt()
-    private val circleColorThinking = 0xFF8B5CF6.toInt()
-    private val circleColorNeedScreenshot = 0xFF22C55E.toInt()
-    private val circleColorSpeaking = 0xFF111827.toInt()
-    private val circleColorX = 0xFFC7CDD4.toInt()
+    // State-specific circle colors (center, edge for gradient)
+    private val circleColorIdleCenter = 0xFF38BDF8.toInt() // bright sky blue
+    private val circleColorIdleEdge = 0xFF0284C7.toInt()
+    private val circleColorListeningCenter = 0xFF4B9CFF.toInt()
+    private val circleColorListeningEdge = 0xFF2563EB.toInt()
+    private val circleColorThinkingCenter = 0xFFA78BFA.toInt()
+    private val circleColorThinkingEdge = 0xFF7C3AED.toInt()
+    private val circleColorNeedScreenshotCenter = 0xFF34D399.toInt()
+    private val circleColorNeedScreenshotEdge = 0xFF16A34A.toInt()
+    private val circleColorSpeakingCenter = 0xFF6366F1.toInt()
+    private val circleColorSpeakingEdge = 0xFF4338CA.toInt()
+    private val circleColorXStroke = 0xFF7A7A90.toInt()
+
+    // Waveform colors per state
+    private val eqColorListening = 0xFF60A5FA.toInt()
+    private val eqColorSpeaking = 0xFF818CF8.toInt()
 
     private var currentState = AssistantState.IDLE
     private var connectionState = ConnectionState.CONNECTED
@@ -115,12 +129,25 @@ class DotView(context: Context) : View(context) {
         }
     }
 
+    // Animated dots phase for "Thinking..." (0f..3f, each integer = one more dot visible)
+    private var thinkingDotPhase = 0f
+    private val thinkingDotsAnimator = ValueAnimator.ofFloat(0f, 4f).apply {
+        duration = 2000
+        repeatCount = ValueAnimator.INFINITE
+        interpolator = LinearInterpolator()
+        addUpdateListener {
+            thinkingDotPhase = it.animatedValue as Float
+            invalidate()
+        }
+    }
+
     private var audioLevel = 0f
     private var playbackLevel = 0f
     private val waveformHistory = FloatArray(180) { 0f }
 
     // Cached fixed width for the pill.
     private var animatedWidth = 0f
+    private var lastPillRect: RectF? = null
 
     private val tempPath = Path()
     private val tempMatrix = Matrix()
@@ -172,19 +199,20 @@ class DotView(context: Context) : View(context) {
     fun setState(state: AssistantState) {
         val previousState = currentState
         currentState = state
-        // Icon paint color is now only used for equalizer bars in center zone
-        iconPaint.color = if (state == AssistantState.IDLE) COLOR_ICON_MUTED else COLOR_ICON
-        eqBarPaint.color = if (state == AssistantState.IDLE) COLOR_ICON_MUTED else COLOR_ICON
 
         loaderAnimator.cancel()
+        thinkingDotsAnimator.cancel()
         loaderRotation = 0f
+        thinkingDotPhase = 0f
 
         when (state) {
-            AssistantState.THINKING -> loaderAnimator.start()
+            AssistantState.THINKING -> {
+                loaderAnimator.start()
+                thinkingDotsAnimator.start()
+            }
             else -> {
                 audioLevel = 0f
                 playbackLevel = 0f
-                /* no animation */
             }
         }
 
@@ -207,16 +235,25 @@ class DotView(context: Context) : View(context) {
     fun setAudioLevel(level: Float) {
         if (currentState != AssistantState.LISTENING) return
         val clamped = level.coerceIn(0f, 1f)
-        audioLevel = audioLevel * 0.20f + clamped * 0.80f
-        appendWaveSample(shapeWaveSample(audioLevel, gate = 0.018f))
+        // Amplify input for better visual range
+        val amplified = (clamped * 2.5f).coerceIn(0f, 1f)
+        audioLevel = audioLevel * 0.15f + amplified * 0.85f
+        appendWaveSample(shapeWaveSample(audioLevel, gate = 0.008f, exp = 0.42f))
         invalidate()
     }
 
     fun setPlaybackLevel(level: Float) {
         if (currentState != AssistantState.SPEAKING) return
         val clamped = level.coerceIn(0f, 1f)
-        playbackLevel = playbackLevel * 0.28f + clamped * 0.72f
-        appendWaveSample(shapeWaveSample(playbackLevel, gate = 0.012f))
+        // Compress output for less peaking
+        val compressed = clamped.pow(1.4f)
+        playbackLevel = playbackLevel * 0.30f + compressed * 0.70f
+        appendWaveSample(shapeWaveSample(playbackLevel, gate = 0.025f, exp = 0.72f))
+        invalidate()
+    }
+
+    fun setLanguageStrings(strings: PillStrings) {
+        pillStrings = strings
         invalidate()
     }
 
@@ -271,10 +308,22 @@ class DotView(context: Context) : View(context) {
         val left = shadowPad
         val top = (height - pillHeight) / 2f
         val rect = RectF(left, top, left + pillWidth, top + pillHeight)
+        lastPillRect = rect
 
-        // Shadow + pill (always pill, never circle)
+        // Shadow
         canvas.drawRoundRect(rect, pillRadius, pillRadius, shadowPaint)
+
+        // Dark gradient background
+        pillPaint.shader = LinearGradient(
+            rect.left, rect.top, rect.right, rect.bottom,
+            COLOR_PILL_BG_START, COLOR_PILL_BG_END,
+            Shader.TileMode.CLAMP
+        )
         canvas.drawRoundRect(rect, pillRadius, pillRadius, pillPaint)
+        pillPaint.shader = null
+
+        // Light gray outline
+        canvas.drawRoundRect(rect, pillRadius, pillRadius, outlinePaint)
 
         val centerY = rect.centerY()
 
@@ -283,61 +332,47 @@ class DotView(context: Context) : View(context) {
         confirmRect.setEmpty()
         micIconRect.setEmpty()
 
-        val stateCircleColor = when (currentState) {
-            AssistantState.IDLE -> circleColorIdle
-            AssistantState.LISTENING -> circleColorListening
-            AssistantState.THINKING -> circleColorThinking
-            AssistantState.NEED_SCREENSHOT -> circleColorNeedScreenshot
-            AssistantState.SPEAKING -> circleColorSpeaking
+        val circleRadius = dp(PILL_HEIGHT_DP) / 2f - dp(4f)
+        val (centerColor, edgeColor) = when (currentState) {
+            AssistantState.IDLE -> circleColorIdleCenter to circleColorIdleEdge
+            AssistantState.LISTENING -> circleColorListeningCenter to circleColorListeningEdge
+            AssistantState.THINKING -> circleColorThinkingCenter to circleColorThinkingEdge
+            AssistantState.NEED_SCREENSHOT -> circleColorNeedScreenshotCenter to circleColorNeedScreenshotEdge
+            AssistantState.SPEAKING -> circleColorSpeakingCenter to circleColorSpeakingEdge
         }
 
         when (currentState) {
             AssistantState.IDLE -> {
                 micIconRect.set(rect.left, rect.top, rect.left + pillHeight, rect.bottom)
-                drawIconInCircle(canvas, micPaths, leftCenterX, centerY, ICON_SIZE_DP, 0f, stateCircleColor, filled = true)
+                drawGradientCircleWithIcon(canvas, micPaths, leftCenterX, centerY, circleRadius, ICON_SIZE_DP, 0f, centerColor, edgeColor)
             }
             AssistantState.LISTENING -> {
                 micIconRect.set(rect.left, rect.top, rect.left + pillHeight, rect.bottom)
-                drawIconInCircle(
-                    canvas = canvas,
-                    paths = listOf(
-                        path("M22 2 11 13"),
-                        path("M22 2 15 22 11 13 2 9 22 2z")
-                    ),
-                    cx = leftCenterX,
-                    cy = centerY,
-                    sizeDp = ICON_SIZE_DP,
-                    rotation = 0f,
-                    circleColor = stateCircleColor,
-                    filled = true
+                drawGradientCircleWithIcon(
+                    canvas,
+                    listOf(path("M22 2 11 13"), path("M22 2 15 22 11 13 2 9 22 2z")),
+                    leftCenterX, centerY, circleRadius, ICON_SIZE_DP, 0f, centerColor, edgeColor
                 )
             }
             AssistantState.THINKING -> {
-                drawIconInCircle(canvas, loaderPaths, leftCenterX, centerY, ICON_SIZE_DP, loaderRotation, stateCircleColor, filled = true)
+                drawGradientCircleWithIcon(canvas, loaderPaths, leftCenterX, centerY, circleRadius, ICON_SIZE_DP, loaderRotation, centerColor, edgeColor)
             }
             AssistantState.NEED_SCREENSHOT -> {
-                confirmRect.set(
-                    rect.left,
-                    rect.top,
-                    rect.left + pillHeight,
-                    rect.bottom
-                )
-                drawIconInCircle(canvas, checkPaths, leftCenterX, centerY, ICON_SIZE_DP, 0f, stateCircleColor, filled = true)
+                confirmRect.set(rect.left, rect.top, rect.left + pillHeight, rect.bottom)
+                drawGradientCircleWithIcon(canvas, checkPaths, leftCenterX, centerY, circleRadius, ICON_SIZE_DP, 0f, centerColor, edgeColor)
             }
             AssistantState.SPEAKING -> {
-                drawIconInCircle(canvas, sparklesPaths, leftCenterX, centerY, ICON_SIZE_DP, 0f, stateCircleColor, filled = true)
+                drawGradientCircleWithIcon(canvas, sparklesPaths, leftCenterX, centerY, circleRadius, ICON_SIZE_DP, 0f, centerColor, edgeColor)
             }
         }
 
         // --- Right zone: X button in outline circle ---
         val rightCenterX = rect.right - pillRadius
-        xButtonRect.set(
-            rect.right - pillHeight,
-            rect.top,
-            rect.right,
-            rect.bottom
-        )
-        drawIconInCircle(canvas, xPaths, rightCenterX, centerY, 14f, 0f, circleColorX, filled = false, circleRadiusOverride = dp(14f))
+        xButtonRect.set(rect.right - pillHeight, rect.top, rect.right, rect.bottom)
+        val xRadius = dp(14f)
+        circleStrokePaint.color = circleColorXStroke
+        canvas.drawCircle(rightCenterX, centerY, xRadius, circleStrokePaint)
+        drawIcon(canvas, xPaths, rightCenterX, centerY, 14f, 0f, circleColorXStroke)
 
         // --- Center zone: text or dynamic EQ ---
         val centerZoneLeft = rect.left + pillHeight + dp(4f)
@@ -348,30 +383,52 @@ class DotView(context: Context) : View(context) {
                 drawDynamicEqualizer(canvas, centerZoneLeft, centerZoneRight, centerY)
             }
             else -> {
-                if (currentState == AssistantState.IDLE) {
-                    drawIdlePrompt(canvas, centerZoneLeft, centerZoneRight, centerY)
-                } else {
-                    // Text in center
-                    val text = statusText()
-                    if (text.isNotBlank()) {
-                        val maxTextWidth = centerZoneRight - centerZoneLeft
-                        val displayText = ellipsize(text, maxTextWidth)
-                        val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
-                        // Center the text
-                        val textWidth = textPaint.measureText(displayText)
-                        val textX = centerZoneLeft + (maxTextWidth - textWidth) / 2f
-                        canvas.drawText(displayText, textX, textY, textPaint)
+                when (currentState) {
+                    AssistantState.IDLE -> drawIdlePrompt(canvas, centerZoneLeft, centerZoneRight, centerY)
+                    AssistantState.THINKING -> drawThinkingText(canvas, centerZoneLeft, centerZoneRight, centerY)
+                    else -> {
+                        val text = statusText()
+                        if (text.isNotBlank()) {
+                            val maxTextWidth = centerZoneRight - centerZoneLeft
+                            val displayText = ellipsize(text, maxTextWidth)
+                            val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
+                            val textWidth = textPaint.measureText(displayText)
+                            val textX = centerZoneLeft + (maxTextWidth - textWidth) / 2f
+                            canvas.drawText(displayText, textX, textY, textPaint)
+                        }
                     }
                 }
             }
         }
 
-        // Connection dot (minimal)
+        // Connection status dot
         if (connectionState != ConnectionState.CONNECTED) {
             val color = if (connectionState == ConnectionState.RECONNECTING) COLOR_RECONNECTING else COLOR_DISCONNECTED
             statusDotPaint.color = color
-            canvas.drawCircle(rect.right - dp(10f), rect.bottom - dp(6f), dp(4f), statusDotPaint)
+            canvas.drawCircle(rect.right - dp(10f), rect.bottom - dp(6f), dp(3.5f), statusDotPaint)
         }
+    }
+
+    private fun drawGradientCircleWithIcon(
+        canvas: Canvas,
+        paths: List<Path>,
+        cx: Float,
+        cy: Float,
+        radius: Float,
+        iconSizeDp: Float,
+        rotation: Float,
+        centerColor: Int,
+        edgeColor: Int
+    ) {
+        circlePaint.shader = RadialGradient(
+            cx, cy, radius,
+            centerColor, edgeColor,
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawCircle(cx, cy, radius, circlePaint)
+        circlePaint.shader = null
+
+        drawIcon(canvas, paths, cx, cy, iconSizeDp, rotation, Color.WHITE)
     }
 
     private fun drawDynamicEqualizer(
@@ -384,25 +441,34 @@ class DotView(context: Context) : View(context) {
         if (zoneWidth <= 0f) return
 
         val spacing = dp(3.8f)
-        val minHalfWave = dp(1.4f)
-        val maxHalfWave = dp(13f)
+        val minHalfWave = dp(1.2f)
+        val maxHalfWave = dp(12f)
         val barCount = (zoneWidth / spacing).toInt().coerceIn(12, waveformHistory.size)
         val usedWidth = spacing * (barCount - 1)
         var x = left + (zoneWidth - usedWidth) / 2f
         val historyStart = (waveformHistory.size - barCount).coerceAtLeast(0)
 
-        eqBarPaint.alpha = 255
+        val baseColor = if (currentState == AssistantState.LISTENING) eqColorListening else eqColorSpeaking
+
         for (i in 0 until barCount) {
             val historyIndex = historyStart + i
             val sample = waveformHistory[historyIndex].coerceIn(0f, 1f)
-            val halfWave = minHalfWave + (maxHalfWave - minHalfWave) * sample
+
+            // Edge windowing: bars at edges stay small, center grows naturally
+            val t = if (barCount <= 1) 0.5f else i.toFloat() / (barCount - 1).toFloat()
+            val edgeWindow = sin(t * Math.PI).toFloat().pow(0.55f)
+
+            val tapered = sample * edgeWindow
+            val halfWave = minHalfWave + (maxHalfWave - minHalfWave) * tapered
+
+            // Older bars fade, newest bars brightest
             val olderFade = if (barCount <= 1) 1f else i.toFloat() / (barCount - 1).toFloat()
-            eqBarPaint.alpha = (96f + 159f * olderFade).toInt().coerceIn(0, 255)
+            val alpha = (80f + 175f * olderFade).toInt().coerceIn(0, 255)
+            eqBarPaint.color = baseColor
+            eqBarPaint.alpha = alpha
             canvas.drawLine(x, centerY - halfWave, x, centerY + halfWave, eqBarPaint)
             x += spacing
         }
-
-        eqBarPaint.alpha = 255
     }
 
     private fun appendWaveSample(sample: Float) {
@@ -413,9 +479,9 @@ class DotView(context: Context) : View(context) {
         waveformHistory[waveformHistory.lastIndex] = clamped
     }
 
-    private fun shapeWaveSample(level: Float, gate: Float): Float {
+    private fun shapeWaveSample(level: Float, gate: Float, exp: Float): Float {
         val gated = ((level - gate) / (1f - gate)).coerceIn(0f, 1f)
-        return gated.pow(0.58f).coerceIn(0f, 1f)
+        return gated.pow(exp).coerceIn(0f, 1f)
     }
 
     private fun clearHistory() {
@@ -428,24 +494,34 @@ class DotView(context: Context) : View(context) {
         val maxTextWidth = right - left
         if (maxTextWidth <= 0f) return
 
-        val prefixWidth = textPaint.measureText(IDLE_TEXT_PREFIX)
-        val suffixWidth = textPaint.measureText(IDLE_TEXT_SUFFIX)
+        val mutedPaint = textPaint
+        val savedColor = mutedPaint.color
+        mutedPaint.color = COLOR_TEXT_MUTED
+
+        val prefix = pillStrings.tapPrefix
+        val suffix = pillStrings.tapSuffix
+        val prefixWidth = mutedPaint.measureText(prefix)
+        val suffixWidth = mutedPaint.measureText(suffix)
         val iconSizePx = dp(INLINE_TEXT_ICON_SIZE_DP)
         val gapPx = dp(INLINE_TEXT_ICON_GAP_DP)
         val totalWidth = prefixWidth + gapPx + iconSizePx + gapPx + suffixWidth
 
         if (totalWidth > maxTextWidth) {
-            val fallback = ellipsize("Tap to talk", maxTextWidth)
-            if (fallback.isBlank()) return
-            val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
-            val textX = left + (maxTextWidth - textPaint.measureText(fallback)) / 2f
-            canvas.drawText(fallback, textX, textY, textPaint)
+            val fallback = ellipsize("$prefix $suffix", maxTextWidth)
+            if (fallback.isBlank()) {
+                mutedPaint.color = savedColor
+                return
+            }
+            val textY = centerY - (mutedPaint.ascent() + mutedPaint.descent()) / 2f
+            val textX = left + (maxTextWidth - mutedPaint.measureText(fallback)) / 2f
+            canvas.drawText(fallback, textX, textY, mutedPaint)
+            mutedPaint.color = savedColor
             return
         }
 
         val startX = left + (maxTextWidth - totalWidth) / 2f
-        val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
-        canvas.drawText(IDLE_TEXT_PREFIX, startX, textY, textPaint)
+        val textY = centerY - (mutedPaint.ascent() + mutedPaint.descent()) / 2f
+        canvas.drawText(prefix, startX, textY, mutedPaint)
 
         val iconCenterX = startX + prefixWidth + gapPx + iconSizePx / 2f
         drawIcon(
@@ -455,12 +531,44 @@ class DotView(context: Context) : View(context) {
             cy = centerY,
             sizeDp = INLINE_TEXT_ICON_SIZE_DP,
             rotation = 0f,
-            color = textPaint.color,
+            color = COLOR_TEXT_MUTED,
             strokeWidthDp = INLINE_TEXT_ICON_STROKE_DP
         )
 
         val suffixX = iconCenterX + iconSizePx / 2f + gapPx
-        canvas.drawText(IDLE_TEXT_SUFFIX, suffixX, textY, textPaint)
+        canvas.drawText(suffix, suffixX, textY, mutedPaint)
+
+        mutedPaint.color = savedColor
+    }
+
+    private fun drawThinkingText(canvas: Canvas, left: Float, right: Float, centerY: Float) {
+        val maxTextWidth = right - left
+        if (maxTextWidth <= 0f) return
+
+        val base = pillStrings.thinking
+        val dots = "..."
+        val fullText = base + dots
+        val fullWidth = textPaint.measureText(fullText)
+        if (fullWidth > maxTextWidth) return
+
+        // Position so "Thinking..." is always centered
+        val startX = left + (maxTextWidth - fullWidth) / 2f
+        val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
+
+        // Draw "Thinking" at full alpha
+        canvas.drawText(base, startX, textY, textPaint)
+
+        // Draw each dot with fade-in based on phase
+        val baseWidth = textPaint.measureText(base)
+        val dotWidth = textPaint.measureText(".")
+        val savedAlpha = textPaint.alpha
+        for (i in 0 until 3) {
+            // phase 0..4: dot i fades in during phase i..i+1, stays visible until phase wraps
+            val dotAlpha = ((thinkingDotPhase - i).coerceIn(0f, 1f) * 255).toInt()
+            textPaint.alpha = dotAlpha
+            canvas.drawText(".", startX + baseWidth + dotWidth * i, textY, textPaint)
+        }
+        textPaint.alpha = savedAlpha
     }
 
     private fun drawIcon(
@@ -504,45 +612,12 @@ class DotView(context: Context) : View(context) {
         iconPaint.strokeWidth = savedStrokeWidth
     }
 
-    private fun drawIconInCircle(
-        canvas: Canvas,
-        paths: List<Path>,
-        cx: Float,
-        cy: Float,
-        sizeDp: Float,
-        rotation: Float,
-        circleColor: Int,
-        filled: Boolean,
-        circleRadiusOverride: Float = 0f
-        ) {
-        val circleRadius = if (circleRadiusOverride > 0f) circleRadiusOverride else dp(PILL_HEIGHT_DP) / 2f - dp(4f)
-
-        if (filled) {
-            circlePaint.color = circleColor
-            canvas.drawCircle(cx, cy, circleRadius, circlePaint)
-        } else {
-            circleStrokePaint.color = circleColor
-            canvas.drawCircle(cx, cy, circleRadius, circleStrokePaint)
-        }
-
-        // Draw icon: white on filled circles, circle color on outline circles
-        drawIcon(
-            canvas = canvas,
-            paths = paths,
-            cx = cx,
-            cy = cy,
-            sizeDp = sizeDp,
-            rotation = rotation,
-            color = if (filled) Color.WHITE else circleColor
-        )
-    }
-
     private fun statusText(): String {
         return when (currentState) {
-            AssistantState.IDLE -> "Tap to talk"
+            AssistantState.IDLE -> "${pillStrings.tapPrefix} ${pillStrings.tapSuffix}"
             AssistantState.LISTENING -> ""
-            AssistantState.THINKING -> "Thinking..."
-            AssistantState.NEED_SCREENSHOT -> "Share screen"
+            AssistantState.THINKING -> "" // handled by drawThinkingText
+            AssistantState.NEED_SCREENSHOT -> pillStrings.shareScreen
             AssistantState.SPEAKING -> ""
         }
     }
@@ -572,5 +647,6 @@ class DotView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         loaderAnimator.cancel()
+        thinkingDotsAnimator.cancel()
     }
 }

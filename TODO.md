@@ -1,16 +1,21 @@
 # TODO
 
-- [ ] Try groq directly for SST and LLM inference
+- [ ] Try gemini flash for llm (google seach grounding enabled)
+- [ ] Try whisper on groq for SST
+- [ ] Make UI nicer
+- [ ] Add different voices for different languages
 - [ ] Create more elaborate agentic workflows involving scoped web search
-- [ ] Make the app ui nicer
-- [ ] Unify notification
 - [ ] More accurate and nicer highlights
-- [=] Animate the equalizer
+- [ ] More rigorous regex
+
 
 - [x] Use Eleven Labs to transcribe the audio
 - [x] Use streaming for SST and TTS
 - [x] Build a conversation visualizer for the backend
 - [x] Look into PII masking on the screenshot
+- [x] Unify notification
+- [x] Animate the equalizer
+- [x] Make the app ui nicer
 
 
 ## USECASES

@@ -1,9 +1,10 @@
 /**
  * Incrementally extracts the "answer" field value from streaming JSON output.
- * Splits into sentences for per-sentence TTS streaming.
+ * Also detects and extracts the "highlights" array early (before answer finishes).
+ * Splits answer into sentences for per-sentence TTS streaming.
  */
 
-const enum ParserState {
+const enum AnswerParseState {
   /** Scanning for the "answer" key */
   SCANNING,
   /** Inside the answer string value, accumulating text */
@@ -12,18 +13,35 @@ const enum ParserState {
   DONE,
 }
 
+const enum HighlightParseState {
+  /** Scanning for the "highlights" key */
+  SCANNING,
+  /** Inside the highlights array, tracking bracket depth */
+  IN_ARRAY,
+  /** Done — closing bracket found */
+  DONE,
+}
+
 // Sentence boundary: .!? followed by space, quote, or end of input.
 // Min 20 chars to avoid false splits on abbreviations like "Dr." or "U.S."
 const MIN_SENTENCE_LENGTH = 20;
 
 export class StreamingAnswerParser {
-  private state: ParserState = ParserState.SCANNING;
+  // Answer parsing state
+  private answerState: AnswerParseState = AnswerParseState.SCANNING;
   private rawOutput = "";
   private answerBuffer = "";
-  private escaped = false;
+  private answerEscaped = false;
+  private answerScanBuffer = "";
 
-  // Track how far into finding `"answer"` + `:` + `"` we are
-  private scanBuffer = "";
+  // Highlight parsing state (runs in parallel on same character stream)
+  private highlightState: HighlightParseState = HighlightParseState.SCANNING;
+  private highlightScanBuffer = "";
+  private highlightArrayContent = "";
+  private highlightBracketDepth = 0;
+  private highlightInString = false;
+  private highlightStringEscaped = false;
+  private _earlyHighlights: Array<{ elementId: string; label: string }> | null = null;
 
   /**
    * Feed a chunk of LLM output. Returns any complete sentences extracted.
@@ -31,67 +49,119 @@ export class StreamingAnswerParser {
   feed(chunk: string): string[] {
     this.rawOutput += chunk;
 
-    if (this.state === ParserState.DONE) {
-      return [];
-    }
-
     const sentences: string[] = [];
 
     for (const ch of chunk) {
-      switch (this.state) {
-        case ParserState.SCANNING:
-          this.scanBuffer += ch;
-          // Look for "answer" followed by optional whitespace, colon, optional whitespace, opening quote
-          // We search for the pattern in the accumulated scan buffer
-          if (this.tryScanForAnswerStart()) {
-            this.state = ParserState.IN_STRING;
-            this.scanBuffer = "";
-          }
-          break;
-
-        case ParserState.IN_STRING:
-          if (this.escaped) {
-            // Handle escape sequences
-            switch (ch) {
-              case '"':
-                this.answerBuffer += '"';
-                break;
-              case '\\':
-                this.answerBuffer += '\\';
-                break;
-              case 'n':
-                this.answerBuffer += '\n';
-                break;
-              case 'r':
-                this.answerBuffer += '\r';
-                break;
-              case 't':
-                this.answerBuffer += '\t';
-                break;
-              default:
-                this.answerBuffer += ch;
-                break;
-            }
-            this.escaped = false;
-          } else if (ch === '\\') {
-            this.escaped = true;
-          } else if (ch === '"') {
-            // End of answer string
-            this.state = ParserState.DONE;
-          } else {
-            this.answerBuffer += ch;
-            // Check for sentence boundary
-            const extracted = this.extractSentences();
-            sentences.push(...extracted);
-          }
-          break;
-
-        case ParserState.DONE:
-          break;
-      }
+      this.processAnswerChar(ch, sentences);
+      this.processHighlightChar(ch);
     }
 
     return sentences;
+  }
+
+  private processAnswerChar(ch: string, sentences: string[]): void {
+    switch (this.answerState) {
+      case AnswerParseState.SCANNING:
+        this.answerScanBuffer += ch;
+        if (this.tryScanForAnswerStart()) {
+          this.answerState = AnswerParseState.IN_STRING;
+          this.answerScanBuffer = "";
+        }
+        break;
+
+      case AnswerParseState.IN_STRING:
+        if (this.answerEscaped) {
+          switch (ch) {
+            case '"':
+              this.answerBuffer += '"';
+              break;
+            case '\\':
+              this.answerBuffer += '\\';
+              break;
+            case 'n':
+              this.answerBuffer += '\n';
+              break;
+            case 'r':
+              this.answerBuffer += '\r';
+              break;
+            case 't':
+              this.answerBuffer += '\t';
+              break;
+            default:
+              this.answerBuffer += ch;
+              break;
+          }
+          this.answerEscaped = false;
+        } else if (ch === '\\') {
+          this.answerEscaped = true;
+        } else if (ch === '"') {
+          this.answerState = AnswerParseState.DONE;
+        } else {
+          this.answerBuffer += ch;
+          const extracted = this.extractSentences();
+          sentences.push(...extracted);
+        }
+        break;
+
+      case AnswerParseState.DONE:
+        break;
+    }
+  }
+
+  private processHighlightChar(ch: string): void {
+    switch (this.highlightState) {
+      case HighlightParseState.SCANNING:
+        this.highlightScanBuffer += ch;
+        if (this.tryScanForHighlightsStart()) {
+          this.highlightState = HighlightParseState.IN_ARRAY;
+          this.highlightBracketDepth = 1;
+          this.highlightArrayContent = "[";
+          this.highlightScanBuffer = "";
+        }
+        break;
+
+      case HighlightParseState.IN_ARRAY:
+        this.highlightArrayContent += ch;
+
+        if (this.highlightInString) {
+          if (this.highlightStringEscaped) {
+            this.highlightStringEscaped = false;
+          } else if (ch === '\\') {
+            this.highlightStringEscaped = true;
+          } else if (ch === '"') {
+            this.highlightInString = false;
+          }
+          return;
+        }
+
+        if (ch === '"') {
+          this.highlightInString = true;
+        } else if (ch === '[') {
+          this.highlightBracketDepth++;
+        } else if (ch === ']') {
+          this.highlightBracketDepth--;
+          if (this.highlightBracketDepth === 0) {
+            this.highlightState = HighlightParseState.DONE;
+            try {
+              this._earlyHighlights = JSON.parse(this.highlightArrayContent);
+            } catch {
+              this._earlyHighlights = null;
+            }
+          }
+        }
+        break;
+
+      case HighlightParseState.DONE:
+        break;
+    }
+  }
+
+  /**
+   * Returns early-parsed highlights, or null if not yet available.
+   * Non-null means the highlights array has been fully parsed from the stream.
+   */
+  getEarlyHighlights(): Array<{ elementId: string; label: string }> | null {
+    return this._earlyHighlights;
   }
 
   /**
@@ -111,21 +181,31 @@ export class StreamingAnswerParser {
   }
 
   /**
-   * Check if we've found the "answer" key start pattern in scanBuffer.
+   * Check if we've found the "answer" key start pattern in answerScanBuffer.
    * Matches: "answer" : "  (with flexible whitespace)
    */
   private tryScanForAnswerStart(): boolean {
-    // Use regex to find the pattern anywhere in the scan buffer
-    const match = this.scanBuffer.match(/"answer"\s*:\s*"/);
+    const match = this.answerScanBuffer.match(/"answer"\s*:\s*"/);
     if (match) {
-      // Check if the match is at the end of the buffer (the opening quote is the last char)
       const matchEnd = match.index! + match[0].length;
-      if (matchEnd === this.scanBuffer.length) {
+      if (matchEnd === this.answerScanBuffer.length) {
         return true;
       }
-      // If match is in the middle, we already passed the opening quote.
-      // Reset and re-scan from after the match.
-      // This shouldn't happen in well-formed JSON from LLM, but handle it.
+    }
+    return false;
+  }
+
+  /**
+   * Check if we've found the "highlights" key start pattern.
+   * Matches: "highlights" : [  (with flexible whitespace)
+   */
+  private tryScanForHighlightsStart(): boolean {
+    const match = this.highlightScanBuffer.match(/"highlights"\s*:\s*\[/);
+    if (match) {
+      const matchEnd = match.index! + match[0].length;
+      if (matchEnd === this.highlightScanBuffer.length) {
+        return true;
+      }
     }
     return false;
   }

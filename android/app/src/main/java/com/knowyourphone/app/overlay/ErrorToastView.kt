@@ -16,9 +16,9 @@ class ErrorToastView(context: Context, message: String) : FrameLayout(context) {
         val paddingV = dp(10)
 
         val bg = GradientDrawable().apply {
-            setColor(0xF21A1A2E.toInt())
+            setColor(0xF00E0E18.toInt())
             cornerRadius = dp(24).toFloat()
-            setStroke(dp(1), 0x18FFFFFF)
+            setStroke(dp(1), 0x663A3A50)
         }
         background = bg
 

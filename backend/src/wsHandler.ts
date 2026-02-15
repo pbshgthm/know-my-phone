@@ -24,7 +24,7 @@ interface ClientState {
 }
 
 const clients = new Map<WebSocket, ClientState>();
-const SUPPORTED_LANGUAGES = new Set(["en", "ta", "hi", "kn", "te"]);
+const SUPPORTED_LANGUAGES = new Set(["en", "ta", "hi", "kn", "te", "ml"]);
 
 export function getAllClients(): Map<WebSocket, ClientState> {
   return clients;

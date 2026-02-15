@@ -6,6 +6,7 @@ const STT_LANGUAGE_CODES: Record<string, string> = {
   ta: "tam",
   kn: "kan",
   te: "tel",
+  ml: "mal",
 };
 
 function resolveVoiceId(languageCode: string): string {
@@ -15,6 +16,7 @@ function resolveVoiceId(languageCode: string): string {
     hi: process.env.ELEVENLABS_VOICE_ID_HI,
     kn: process.env.ELEVENLABS_VOICE_ID_KN,
     te: process.env.ELEVENLABS_VOICE_ID_TE,
+    ml: process.env.ELEVENLABS_VOICE_ID_ML,
   };
 
   return (

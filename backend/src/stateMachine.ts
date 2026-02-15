@@ -448,6 +448,7 @@ async function streamAnswerToClient(
       }
 
       const sentences = parser.feed(chunk);
+
       for (const sentence of sentences) {
         const clean = stripAudioTags(sentence);
         if (!clean) continue;

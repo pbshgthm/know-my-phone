@@ -15,6 +15,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import com.knowyourphone.app.i18n.LanguageManager
 import com.knowyourphone.app.overlay.DotView
 import com.knowyourphone.app.overlay.ErrorToastView
 import com.knowyourphone.app.overlay.HighlightOverlayView
@@ -81,7 +82,11 @@ class OverlayService : Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
+        LanguageManager.init(applicationContext)
+        val langCode = prefs.getString("language_code", "en") ?: "en"
+
         addDotOverlay()
+        dotView?.setLanguageStrings(LanguageManager.getPillStrings(langCode))
         addHighlightOverlay()
 
         viewModel.connect()
@@ -107,6 +112,7 @@ class OverlayService : Service() {
 
     fun setLanguage(languageCode: String) {
         viewModel.setLanguage(languageCode)
+        dotView?.setLanguageStrings(LanguageManager.getPillStrings(languageCode))
     }
 
     fun setAutoScreenshot(enabled: Boolean) {

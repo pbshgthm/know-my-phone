@@ -6,7 +6,9 @@ import android.util.Base64
 import android.util.Log
 import com.google.gson.Gson
 import com.knowyourphone.app.KypAccessibilityService
+import com.knowyourphone.app.R
 import com.knowyourphone.app.audio.AudioRecorder
+import com.knowyourphone.app.audio.PromptAudioPlayer
 import com.knowyourphone.app.audio.StreamingAudioPlayer
 import kotlinx.coroutines.channels.Channel
 import com.knowyourphone.app.model.HighlightTarget
@@ -58,6 +60,7 @@ class AssistantViewModel(
     val playbackLevel: StateFlow<Float> = _playbackLevel
 
     private val audioRecorder = AudioRecorder()
+    private val promptPlayer = PromptAudioPlayer(context)
 
     private var sessionId: String = UUID.randomUUID().toString()
     private var languageCode: String = getPreferredLanguageCode()
@@ -216,13 +219,16 @@ class AssistantViewModel(
                 _state.value = AssistantState.IDLE
             }
             AssistantState.NEED_SCREENSHOT -> {
-                onScreenshotDecline()
+                promptPlayer.stop()
+                sendCancel()
+                _state.value = AssistantState.IDLE
             }
             AssistantState.SPEAKING -> {
                 stopStreamingPlayer()
                 _highlights.value = emptyList()
                 highlightDismissJob?.cancel()
                 pendingHighlights = emptyList()
+        
                 _inputLevel.value = 0f
                 smoothedInputLevel = 0f
                 _playbackLevel.value = 0f
@@ -243,6 +249,7 @@ class AssistantViewModel(
         }
         _highlights.value = emptyList()
         highlightDismissJob?.cancel()
+
         _inputLevel.value = 0f
         smoothedInputLevel = 0f
         _playbackLevel.value = 0f
@@ -378,6 +385,7 @@ class AssistantViewModel(
                 if (player != null) {
                     player.onCompletion = {
                         scope.launch(Dispatchers.Main) {
+                            // Show highlights after audio playback completes
                             if (pendingHighlights.isNotEmpty()) {
                                 _highlights.value = pendingHighlights
                                 scheduleHighlightDismiss()
@@ -413,6 +421,10 @@ class AssistantViewModel(
             _screenshotReason.value = message.reason
             scope.launch(Dispatchers.Main) {
                 _state.value = AssistantState.NEED_SCREENSHOT
+                // Play voice prompt when manual screenshot mode (auto-screenshot off)
+                if (!_autoScreenshot.value) {
+                    promptPlayer.play(R.raw.share_screen)
+                }
             }
             return
         }
@@ -431,6 +443,7 @@ class AssistantViewModel(
                 }
 
                 is ServerMessage.AnswerStart -> { /* handled above */ }
+                is ServerMessage.Highlights -> { /* no-op: highlights come via answer_end */ }
                 is ServerMessage.AnswerEnd -> { /* handled above */ }
                 is ServerMessage.ScreenshotRequest -> { /* handled above */ }
 
@@ -482,6 +495,7 @@ class AssistantViewModel(
      * User confirmed screenshot. Capture and send.
      */
     fun onScreenshotConfirm() {
+        promptPlayer.stop()
         _state.value = AssistantState.THINKING
         captureAndSendScreenshot()
     }
@@ -574,6 +588,7 @@ class AssistantViewModel(
         sendHello()
         sendLanguage()
         pendingHighlights = emptyList()
+
         _inputLevel.value = 0f
         smoothedInputLevel = 0f
         _playbackLevel.value = 0f
@@ -620,6 +635,7 @@ class AssistantViewModel(
     fun destroy() {
         highlightDismissJob?.cancel()
         stopStreamingPlayer()
+        promptPlayer.stop()
         if (audioRecorder.isCurrentlyRecording()) {
             audioRecorder.stopRecording()
         }

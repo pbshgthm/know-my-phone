@@ -136,7 +136,7 @@ class StreamingAudioPlayer {
         }
 
         val rms = sqrt(sumSquares / sampleCount)
-        // Scale up for better visual range (speech RMS is typically 0.02-0.15)
-        return (rms * 4.0).coerceIn(0.0, 1.0).toFloat()
+        // Scale for visual range (speech RMS is typically 0.02-0.15)
+        return (rms * 3.0).coerceIn(0.0, 1.0).toFloat()
     }
 }
