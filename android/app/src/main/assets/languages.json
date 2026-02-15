@@ -9,7 +9,9 @@
         "tapSuffix": "to ask",
         "thinking": "Thinking",
         "shareScreen": "Share screen",
-        "idlePrompt": "Tap {mic} to ask"
+        "idlePrompt": "Tap {mic} to ask",
+        "showOpenApp": "Show open app",
+        "closeApp": "Close"
       },
       "app": {
         "title": "Know Your Phone",
@@ -50,7 +52,9 @@
         "tapSuffix": "पूछें",
         "thinking": "सोच रहा हूँ",
         "shareScreen": "स्क्रीन शेयर करें",
-        "idlePrompt": "पूछने के लिए {mic} दबाएँ"
+        "idlePrompt": "पूछने के लिए {mic} दबाएँ",
+        "showOpenApp": "खुला ऐप दिखाएँ",
+        "closeApp": "बंद करें"
       },
       "app": {
         "title": "Know Your Phone",
@@ -91,7 +95,9 @@
         "tapSuffix": "கேளுங்கள்",
         "thinking": "சிந்தித்து பார்க்கிறேன்",
         "shareScreen": "திரையை பகிரவும்",
-        "idlePrompt": "{mic} அழுத்தி கேளுங்கள்"
+        "idlePrompt": "{mic} அழுத்தி கேளுங்கள்",
+        "showOpenApp": "திறந்த ஆப்பைக் காட்டு",
+        "closeApp": "மூடு"
       },
       "app": {
         "title": "Know Your Phone",
@@ -132,7 +138,9 @@
         "tapSuffix": "ಕೇಳಿ",
         "thinking": "ಯೋಚಿಸುತ್ತಿದ್ದೇನೆ",
         "shareScreen": "ಸ್ಕ್ರೀನ್ ಹಂಚಿ",
-        "idlePrompt": "{mic} ಒತ್ತಿ ಕೇಳಿ"
+        "idlePrompt": "{mic} ಒತ್ತಿ ಕೇಳಿ",
+        "showOpenApp": "ತೆರೆದ ಆಪ್ ತೋರಿಸಿ",
+        "closeApp": "ಮುಚ್ಚಿ"
       },
       "app": {
         "title": "Know Your Phone",
@@ -173,7 +181,9 @@
         "tapSuffix": "అడగండి",
         "thinking": "ఆలోచిస్తున్నాను",
         "shareScreen": "స్క్రీన్ షేర్ చేయండి",
-        "idlePrompt": "అడగాలంటే {mic} నొక్కండి"
+        "idlePrompt": "అడగాలంటే {mic} నొక్కండి",
+        "showOpenApp": "తెరిచిన యాప్ చూపించు",
+        "closeApp": "మూసివేయి"
       },
       "app": {
         "title": "Know Your Phone",
@@ -214,7 +224,9 @@
         "tapSuffix": "ചോദിക്കൂ",
         "thinking": "ചിന്തിച്ചുകൊണ്ടിരിക്കുന്നു",
         "shareScreen": "സ്ക്രീൻ ഷെയർ ചെയ്യൂ",
-        "idlePrompt": "ചോദിക്കാൻ {mic} അമർത്തൂ"
+        "idlePrompt": "ചോദിക്കാൻ {mic} അമർത്തൂ",
+        "showOpenApp": "തുറന്ന ആപ്പ് കാണിക്കുക",
+        "closeApp": "അടയ്ക്കുക"
       },
       "app": {
         "title": "Know Your Phone",

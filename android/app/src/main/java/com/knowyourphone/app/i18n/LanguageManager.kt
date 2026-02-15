@@ -8,7 +8,9 @@ data class PillStrings(
     val tapSuffix: String,
     val thinking: String,
     val shareScreen: String,
-    val idlePrompt: String? = null
+    val idlePrompt: String? = null,
+    val showOpenApp: String = "Show open app",
+    val closeApp: String = "Close"
 )
 
 data class AppStrings(

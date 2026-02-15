@@ -35,6 +35,7 @@ import com.knowyourphone.app.i18n.LanguageManager
 class MainActivity : AppCompatActivity() {
     companion object {
         private const val REQUEST_MIC = 100
+        const val EXTRA_FORCE_OPEN_UI = "force_open_ui"
 
         // Palette
         private const val COLOR_BG = 0xFFF8F9FA.toInt()
@@ -91,18 +92,54 @@ class MainActivity : AppCompatActivity() {
 
     private var selectedLanguageCode = "en"
     private val circleViews = mutableListOf<TextView>()
+    private var uiBuilt = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         LanguageManager.init(this)
         val prefs = getSharedPreferences("kyp_prefs", MODE_PRIVATE)
         selectedLanguageCode = prefs.getString("language_code", "en") ?: "en"
+        if (shouldAutoShowPillOnly(intent)) {
+            if (OverlayService.instance == null) {
+                OverlayService.start(this)
+            }
+            finish()
+            return
+        }
         buildUi()
+        uiBuilt = true
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (shouldAutoShowPillOnly(intent)) {
+            if (OverlayService.instance == null) {
+                OverlayService.start(this)
+            }
+            finish()
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        updatePermissionStatus()
+        if (uiBuilt) {
+            updatePermissionStatus()
+        }
+    }
+
+    private fun shouldAutoShowPillOnly(currentIntent: Intent?): Boolean {
+        val forceOpenUi = currentIntent?.getBooleanExtra(EXTRA_FORCE_OPEN_UI, false) == true
+        currentIntent?.removeExtra(EXTRA_FORCE_OPEN_UI)
+        return !forceOpenUi && allPermissionsGranted()
+    }
+
+    private fun allPermissionsGranted(): Boolean {
+        val hasMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        val hasOverlay = Settings.canDrawOverlays(this)
+        val hasAccessibility = isAccessibilityServiceEnabled()
+        return hasMic && hasOverlay && hasAccessibility
     }
 
     private fun buildUi() {
@@ -544,7 +581,9 @@ class MainActivity : AppCompatActivity() {
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        updatePermissionStatus()
+        if (uiBuilt) {
+            updatePermissionStatus()
+        }
     }
 
     private fun dp(value: Int): Int {

@@ -19,6 +19,7 @@ import com.knowyourphone.app.i18n.LanguageManager
 import com.knowyourphone.app.overlay.DotView
 import com.knowyourphone.app.overlay.ErrorToastView
 import com.knowyourphone.app.overlay.HighlightOverlayView
+import com.knowyourphone.app.overlay.PillContextMenuOverlayView
 import com.knowyourphone.app.state.AssistantState
 import com.knowyourphone.app.state.AssistantViewModel
 import kotlinx.coroutines.*
@@ -49,6 +50,7 @@ class OverlayService : Service() {
     private var dotView: DotView? = null
     private var highlightView: HighlightOverlayView? = null
     private var errorToastView: ErrorToastView? = null
+    private var contextMenuView: PillContextMenuOverlayView? = null
     private var dotParams: WindowManager.LayoutParams? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -66,6 +68,7 @@ class OverlayService : Service() {
         dotView?.visibility = visibility
         highlightView?.visibility = if (visible && highlightView?.hasHighlights() == true) View.VISIBLE else View.GONE
         errorToastView?.visibility = visibility
+        contextMenuView?.visibility = visibility
     }
 
     override fun onCreate() {
@@ -99,6 +102,7 @@ class OverlayService : Service() {
         super.onDestroy()
         instance = null
         viewModel.destroy()
+        dismissContextMenu()
         removeDotOverlay()
         removeHighlightOverlay()
         removeErrorToast()
@@ -113,6 +117,7 @@ class OverlayService : Service() {
     fun setLanguage(languageCode: String) {
         viewModel.setLanguage(languageCode)
         dotView?.setLanguageStrings(languageCode, LanguageManager.getPillStrings(languageCode))
+        dismissContextMenu()
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
     }
 
@@ -187,6 +192,9 @@ class OverlayService : Service() {
 
                     val action = dotView?.hitTestAction(event.x, event.y) ?: DotView.PillAction.NONE
                     pressedAction = action
+                    if (action != DotView.PillAction.MENU_BUTTON) {
+                        dismissContextMenu()
+                    }
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -194,6 +202,7 @@ class OverlayService : Service() {
                     val dy = event.rawY - initialTouchY
                     if (!isDragging && (dx * dx + dy * dy > 100)) {
                         isDragging = true
+                        dismissContextMenu()
                     }
                     if (isDragging) {
                         params.x = initialX + dx.toInt()
@@ -214,6 +223,13 @@ class OverlayService : Service() {
                                     } else if (state != AssistantState.NEED_SCREENSHOT) {
                                         viewModel.onPressStart()
                                     }
+                                }
+                            }
+                            DotView.PillAction.MENU_BUTTON -> {
+                                if (pressedAction == DotView.PillAction.MENU_BUTTON &&
+                                    viewModel.state.value == AssistantState.IDLE
+                                ) {
+                                    toggleContextMenu()
                                 }
                             }
                             DotView.PillAction.X_BUTTON -> {
@@ -245,11 +261,13 @@ class OverlayService : Service() {
     }
 
     private fun hideOverlay() {
+        dismissContextMenu()
         viewModel.resetSession()
         stopSelf()
     }
 
     private fun removeDotOverlay() {
+        dismissContextMenu()
         dotView?.let {
             it.onSizeChanged = null
             try { windowManager.removeView(it) } catch (_: Exception) {}
@@ -289,6 +307,9 @@ class OverlayService : Service() {
             viewModel.state.collect { state ->
                 dotView?.setState(state)
                 updateDotLayoutForState()
+                if (state != AssistantState.IDLE) {
+                    dismissContextMenu()
+                }
             }
         }
 
@@ -410,9 +431,96 @@ class OverlayService : Service() {
         } catch (_: Exception) {}
     }
 
+    private fun toggleContextMenu() {
+        if (contextMenuView != null) {
+            dismissContextMenu()
+        } else {
+            showContextMenu()
+        }
+    }
+
+    private fun showContextMenu() {
+        if (contextMenuView != null) return
+        val params = dotParams ?: return
+        if (viewModel.state.value != AssistantState.IDLE) return
+
+        val bounds = windowManager.currentWindowMetrics.bounds
+        val edgeMargin = dp(8)
+        val gap = dp(8)
+        val menuWidth = dp(PillContextMenuOverlayView.MENU_WIDTH_DP)
+        val menuHeightEstimate =
+            dp(PillContextMenuOverlayView.MENU_VERTICAL_PADDING_DP) * 2 +
+                    dp(PillContextMenuOverlayView.MENU_ITEM_HEIGHT_DP) * 2 +
+                    dp(PillContextMenuOverlayView.MENU_DIVIDER_DP)
+
+        val anchorCenterX = params.x + params.width / 2
+        val menuLeft = (anchorCenterX - menuWidth / 2)
+            .coerceIn(edgeMargin, bounds.width() - menuWidth - edgeMargin)
+
+        val availableBelow = bounds.height() - (params.y + params.height) - gap - edgeMargin
+        val availableAbove = params.y - gap - edgeMargin
+        val showBelow = availableBelow >= menuHeightEstimate || availableBelow >= availableAbove
+        val rawMenuTop = if (showBelow) {
+            params.y + params.height + gap
+        } else {
+            params.y - menuHeightEstimate - gap
+        }
+        val menuTop = rawMenuTop.coerceIn(edgeMargin, bounds.height() - menuHeightEstimate - edgeMargin)
+
+        val labels = LanguageManager.getPillStrings(currentLanguageCode())
+        val overlay = PillContextMenuOverlayView(
+            context = this,
+            showOpenAppLabel = labels.showOpenApp,
+            closeAppLabel = labels.closeApp,
+            onShowOpenApp = { openMainApp() },
+            onCloseApp = { hideOverlay() },
+            onDismiss = { dismissContextMenu() }
+        ).apply {
+            placeMenu(menuLeft, menuTop)
+        }
+
+        val menuParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+
+        contextMenuView = overlay
+        try {
+            windowManager.addView(overlay, menuParams)
+        } catch (_: Exception) {
+            contextMenuView = null
+        }
+    }
+
+    private fun dismissContextMenu() {
+        contextMenuView?.let {
+            try { windowManager.removeView(it) } catch (_: Exception) {}
+        }
+        contextMenuView = null
+    }
+
+    private fun openMainApp() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            putExtra(MainActivity.EXTRA_FORCE_OPEN_UI, true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        startActivity(intent)
+    }
+
     private fun dp(value: Int): Int {
         return TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics
+        ).toInt()
+    }
+
+    private fun dp(value: Float): Int {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, value, resources.displayMetrics
         ).toInt()
     }
 

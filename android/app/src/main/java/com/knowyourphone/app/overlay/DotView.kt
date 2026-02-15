@@ -28,12 +28,14 @@ class DotView(context: Context) : View(context) {
         private const val PILL_HEIGHT_DP = 48f
         private const val PILL_MIN_WIDTH_DP = 188f
         private const val PILL_MAX_WIDTH_FRACTION = 0.92f
-        private const val SHADOW_PAD_DP = 0f
+        private const val SHADOW_PAD_DP = 2f
         private const val ICON_SIZE_DP = 20f
         private const val ICON_STROKE_DP = 2f
         private const val INLINE_TEXT_ICON_SIZE_DP = 14f
         private const val INLINE_TEXT_ICON_STROKE_DP = 1.35f
         private const val INLINE_TEXT_ICON_GAP_DP = 4f
+        private const val WIDTH_ANIM_MIN_DURATION_MS = 200L
+        private const val WIDTH_ANIM_MAX_DURATION_MS = 360L
 
         // Dark pill palette
         private const val COLOR_PILL_BG_START = 0xFF072838.toInt()
@@ -47,7 +49,7 @@ class DotView(context: Context) : View(context) {
     }
 
     enum class ConnectionState { CONNECTED, DISCONNECTED, RECONNECTING }
-    enum class PillAction { MIC_ICON, X_BUTTON, CONFIRM, NONE }
+    enum class PillAction { MIC_ICON, MENU_BUTTON, X_BUTTON, CONFIRM, NONE }
 
     var onSizeChanged: (() -> Unit)? = null
 
@@ -97,6 +99,11 @@ class DotView(context: Context) : View(context) {
         strokeWidth = dp(1.5f)
     }
 
+    private val menuDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = COLOR_TEXT_MUTED
+    }
+
     // State-specific circle colors (center, edge for gradient)
     private val circleColorIdleCenter = 0xFF38BDF8.toInt() // bright sky blue
     private val circleColorIdleEdge = 0xFF0284C7.toInt()
@@ -130,14 +137,24 @@ class DotView(context: Context) : View(context) {
         }
     }
 
-    // Animated dots phase for "Thinking..." (0f..3f, each integer = one more dot visible)
-    private var thinkingDotPhase = 0f
-    private val thinkingDotsAnimator = ValueAnimator.ofFloat(0f, 4f).apply {
-        duration = 2000
+    private var thinkingSheenPhase = 0f
+    private val thinkingSheenAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 1450
         repeatCount = ValueAnimator.INFINITE
         interpolator = LinearInterpolator()
         addUpdateListener {
-            thinkingDotPhase = it.animatedValue as Float
+            thinkingSheenPhase = it.animatedValue as Float
+            invalidate()
+        }
+    }
+
+    private var outlineShiftPhase = 0f
+    private val outlineFlowAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 1850
+        repeatCount = ValueAnimator.INFINITE
+        interpolator = LinearInterpolator()
+        addUpdateListener {
+            outlineShiftPhase = it.animatedValue as Float
             invalidate()
         }
     }
@@ -148,6 +165,7 @@ class DotView(context: Context) : View(context) {
 
     // Animated width for the pill.
     private var animatedWidth = 0f
+    private var lastAnimatedWidthInt = 0
     private var widthAnimator: ValueAnimator? = null
     private var lastPillRect: RectF? = null
 
@@ -199,19 +217,24 @@ class DotView(context: Context) : View(context) {
         currentState = state
 
         loaderAnimator.cancel()
-        thinkingDotsAnimator.cancel()
+        thinkingSheenAnimator.cancel()
+        outlineFlowAnimator.cancel()
         loaderRotation = 0f
-        thinkingDotPhase = 0f
+        thinkingSheenPhase = 0f
+        outlineShiftPhase = 0f
 
         when (state) {
             AssistantState.THINKING -> {
                 loaderAnimator.start()
-                thinkingDotsAnimator.start()
+                thinkingSheenAnimator.start()
             }
             else -> {
                 audioLevel = 0f
                 playbackLevel = 0f
             }
+        }
+        if (isOutlineAnimatedState(state)) {
+            outlineFlowAnimator.start()
         }
 
         if (state != previousState) {
@@ -286,6 +309,7 @@ class DotView(context: Context) : View(context) {
         val target = computeTargetWidthPx()
         if (animatedWidth <= 0f) {
             animatedWidth = target
+            lastAnimatedWidthInt = kotlin.math.ceil(animatedWidth).toInt()
             onSizeChanged?.invoke()
             requestLayout()
             invalidate()
@@ -295,13 +319,21 @@ class DotView(context: Context) : View(context) {
         if (kotlin.math.abs(animatedWidth - target) < 1f) return
 
         widthAnimator?.cancel()
+        val deltaDp = kotlin.math.abs(target - animatedWidth) / resources.displayMetrics.density
+        val duration = (WIDTH_ANIM_MIN_DURATION_MS + deltaDp * 1.9f)
+            .toLong()
+            .coerceIn(WIDTH_ANIM_MIN_DURATION_MS, WIDTH_ANIM_MAX_DURATION_MS)
         widthAnimator = ValueAnimator.ofFloat(animatedWidth, target).apply {
-            duration = 240
+            this.duration = duration
             interpolator = AccelerateDecelerateInterpolator()
             addUpdateListener {
                 animatedWidth = it.animatedValue as Float
-                onSizeChanged?.invoke()
-                requestLayout()
+                val widthInt = kotlin.math.ceil(animatedWidth).toInt()
+                if (widthInt != lastAnimatedWidthInt) {
+                    lastAnimatedWidthInt = widthInt
+                    onSizeChanged?.invoke()
+                    requestLayout()
+                }
                 invalidate()
             }
             start()
@@ -312,8 +344,7 @@ class DotView(context: Context) : View(context) {
         return when (currentState) {
             AssistantState.IDLE -> measureIdlePromptWidth(textPaint.textSize, includeIcon = true)
             AssistantState.THINKING -> {
-                val base = pillStrings.thinking.trim().trimEnd('.', '…')
-                textPaint.measureText(base) + textPaint.measureText(".") * 3f
+                textPaint.measureText(pillStrings.thinking.trim())
             }
             AssistantState.NEED_SCREENSHOT -> textPaint.measureText(pillStrings.shareScreen)
             AssistantState.LISTENING, AssistantState.SPEAKING -> dp(92f)
@@ -322,7 +353,9 @@ class DotView(context: Context) : View(context) {
 
     fun hitTestAction(x: Float, y: Float): PillAction {
         return when {
-            xButtonRect.contains(x, y) -> PillAction.X_BUTTON
+            xButtonRect.contains(x, y) -> {
+                if (currentState == AssistantState.IDLE) PillAction.MENU_BUTTON else PillAction.X_BUTTON
+            }
             currentState == AssistantState.NEED_SCREENSHOT && confirmRect.contains(x, y) -> PillAction.CONFIRM
             (currentState == AssistantState.IDLE || currentState == AssistantState.LISTENING) &&
                     micIconRect.contains(x, y) -> PillAction.MIC_ICON
@@ -357,12 +390,26 @@ class DotView(context: Context) : View(context) {
         pillPaint.shader = null
 
         // Gradient outline (cyan -> blue -> purple)
-        outlinePaint.shader = LinearGradient(
-            rect.left, rect.top, rect.right, rect.bottom,
-            intArrayOf(COLOR_OUTLINE_START, COLOR_OUTLINE_MID, COLOR_OUTLINE_END),
-            floatArrayOf(0f, 0.55f, 1f),
+        val outlineShader = LinearGradient(
+            rect.left - rect.width(), rect.top, rect.right + rect.width(), rect.bottom,
+            intArrayOf(
+                COLOR_OUTLINE_START,
+                COLOR_OUTLINE_MID,
+                COLOR_OUTLINE_END,
+                COLOR_OUTLINE_START,
+                COLOR_OUTLINE_MID,
+                COLOR_OUTLINE_END
+            ),
+            floatArrayOf(0f, 0.2f, 0.4f, 0.6f, 0.8f, 1f),
             Shader.TileMode.CLAMP
         )
+        if (isOutlineAnimatedState(currentState)) {
+            val shift = rect.width() * 2f * outlineShiftPhase
+            val shaderMatrix = Matrix()
+            shaderMatrix.setTranslate(shift, 0f)
+            outlineShader.setLocalMatrix(shaderMatrix)
+        }
+        outlinePaint.shader = outlineShader
         canvas.drawRoundRect(rect, pillRadius, pillRadius, outlinePaint)
         outlinePaint.shader = null
 
@@ -418,7 +465,11 @@ class DotView(context: Context) : View(context) {
         val xRadius = dp(14f)
         circleStrokePaint.color = circleColorXStroke
         canvas.drawCircle(rightCenterX, centerY, xRadius, circleStrokePaint)
-        drawIcon(canvas, xPaths, rightCenterX, centerY, 14f, 0f, circleColorXStroke)
+        if (currentState == AssistantState.IDLE) {
+            drawMenuDots(canvas, rightCenterX, centerY)
+        } else {
+            drawIcon(canvas, xPaths, rightCenterX, centerY, 14f, 0f, circleColorXStroke)
+        }
 
         // --- Center zone: text or dynamic EQ ---
         val centerZoneLeft = rect.left + pillHeight + dp(4f)
@@ -649,38 +700,63 @@ class DotView(context: Context) : View(context) {
         val maxTextWidth = right - left
         if (maxTextWidth <= 0f) return
 
-        val base = pillStrings.thinking.trim().trimEnd('.', '…')
-        if (base.isBlank()) return
+        val text = pillStrings.thinking.trim()
+        if (text.isBlank()) return
 
         val savedTextSize = textPaint.textSize
-        var dotWidth = textPaint.measureText(".")
-        var fullWidth = textPaint.measureText(base) + dotWidth * 3f
-        if (fullWidth > maxTextWidth) {
-            val scale = (maxTextWidth / fullWidth).coerceAtLeast(0.82f)
+        var width = textPaint.measureText(text)
+        if (width > maxTextWidth) {
+            val scale = (maxTextWidth / width).coerceAtLeast(0.82f)
             textPaint.textSize = savedTextSize * scale
-            dotWidth = textPaint.measureText(".")
-            fullWidth = textPaint.measureText(base) + dotWidth * 3f
+            width = textPaint.measureText(text)
         }
 
-        val baseWidth = textPaint.measureText(base)
-
-        // Position so "Thinking..." is always centered
-        val startX = left + (maxTextWidth - fullWidth) / 2f
+        val startX = left + (maxTextWidth - width) / 2f
         val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
 
-        // Draw "Thinking" at full alpha
-        canvas.drawText(base, startX, textY, textPaint)
-
-        // Draw each dot with fade-in based on phase
+        val savedColor = textPaint.color
+        val savedShader = textPaint.shader
         val savedAlpha = textPaint.alpha
-        for (i in 0 until 3) {
-            // phase 0..4: dot i fades in during phase i..i+1, stays visible until phase wraps
-            val dotAlpha = ((thinkingDotPhase - i).coerceIn(0f, 1f) * 255).toInt()
-            textPaint.alpha = dotAlpha
-            canvas.drawText(".", startX + baseWidth + dotWidth * i, textY, textPaint)
-        }
+
+        textPaint.color = COLOR_TEXT
+        textPaint.shader = null
+        textPaint.alpha = 255
+        canvas.drawText(text, startX, textY, textPaint)
+
+        val sheenBand = width * 0.42f
+        val sheenTravelStart = startX - sheenBand
+        val sheenTravelEnd = startX + width + sheenBand
+        val sheenCenter = sheenTravelStart + (sheenTravelEnd - sheenTravelStart) * thinkingSheenPhase
+        textPaint.shader = LinearGradient(
+            sheenCenter - sheenBand,
+            textY,
+            sheenCenter + sheenBand,
+            textY,
+            intArrayOf(Color.TRANSPARENT, 0xCCFFFFFF.toInt(), Color.TRANSPARENT),
+            floatArrayOf(0f, 0.52f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        textPaint.alpha = 255
+        canvas.drawText(text, startX, textY, textPaint)
+
+        textPaint.color = savedColor
+        textPaint.shader = savedShader
         textPaint.alpha = savedAlpha
         textPaint.textSize = savedTextSize
+    }
+
+    private fun drawMenuDots(canvas: Canvas, cx: Float, cy: Float) {
+        val dotRadius = dp(1.7f)
+        val spacing = dp(4.8f)
+        canvas.drawCircle(cx - spacing, cy, dotRadius, menuDotPaint)
+        canvas.drawCircle(cx, cy, dotRadius, menuDotPaint)
+        canvas.drawCircle(cx + spacing, cy, dotRadius, menuDotPaint)
+    }
+
+    private fun isOutlineAnimatedState(state: AssistantState): Boolean {
+        return state == AssistantState.LISTENING ||
+                state == AssistantState.THINKING ||
+                state == AssistantState.SPEAKING
     }
 
     private fun drawCenteredTextAutoFit(
@@ -778,7 +854,8 @@ class DotView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         loaderAnimator.cancel()
-        thinkingDotsAnimator.cancel()
+        thinkingSheenAnimator.cancel()
+        outlineFlowAnimator.cancel()
         widthAnimator?.cancel()
     }
 }
