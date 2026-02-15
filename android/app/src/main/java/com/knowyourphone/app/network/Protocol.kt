@@ -56,7 +56,8 @@ sealed class ServerMessage {
     data class Transcript(val text: String) : ServerMessage()
     data class NeedScreenshot(val reason: String) : ServerMessage()
     data class ScreenshotRequest(val text: String, val reason: String, val hasAudio: Boolean) : ServerMessage()
-    data class Answer(val text: String, val highlights: List<HighlightTarget>, val hasAudio: Boolean) : ServerMessage()
+    object AnswerStart : ServerMessage()
+    data class AnswerEnd(val text: String, val highlights: List<HighlightTarget>) : ServerMessage()
     data class Error(val message: String) : ServerMessage()
     object Cancelled : ServerMessage()
 }
@@ -79,16 +80,16 @@ object MessageParser {
                     reason = obj.get("reason")?.asString ?: "",
                     hasAudio = obj.get("hasAudio")?.asBoolean ?: false
                 )
-                "answer" -> {
+                "answer_start" -> ServerMessage.AnswerStart
+                "answer_end" -> {
                     val highlights = mutableListOf<HighlightTarget>()
                     obj.getAsJsonArray("highlights")?.forEach { elem ->
                         val h = gson.fromJson(elem, HighlightTarget::class.java)
                         highlights.add(h)
                     }
-                    ServerMessage.Answer(
+                    ServerMessage.AnswerEnd(
                         text = obj.get("text")?.asString ?: "",
-                        highlights = highlights,
-                        hasAudio = obj.get("hasAudio")?.asBoolean ?: false
+                        highlights = highlights
                     )
                 }
                 "error" -> ServerMessage.Error(

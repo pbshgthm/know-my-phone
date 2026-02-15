@@ -3,7 +3,8 @@ import type {
   AudioDataMessage,
   ScreenshotResponseMessage,
   TranscriptMessage,
-  AnswerMessage,
+  AnswerStartMessage,
+  AnswerEndMessage,
   ErrorMessage,
   Highlight,
   UiTree,
@@ -65,15 +66,19 @@ describe('Protocol Message Types', () => {
       label: 'Settings',
     };
 
-    const answer: AnswerMessage = {
-      type: 'answer',
+    const answerStart: AnswerStartMessage = {
+      type: 'answer_start',
+    };
+    expect(answerStart.type).toBe('answer_start');
+
+    const answerEnd: AnswerEndMessage = {
+      type: 'answer_end',
       text: 'Tap the button',
       highlights: [highlightWithBounds, highlightWithoutBounds],
-      hasAudio: true,
     };
-    expect(answer.highlights.length).toBe(2);
-    expect(answer.highlights[0].bounds).toBeDefined();
-    expect(answer.highlights[1].bounds).toBeUndefined();
+    expect(answerEnd.highlights.length).toBe(2);
+    expect(answerEnd.highlights[0].bounds).toBeDefined();
+    expect(answerEnd.highlights[1].bounds).toBeUndefined();
 
     const error: ErrorMessage = {
       type: 'error',

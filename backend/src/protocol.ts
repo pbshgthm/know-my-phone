@@ -85,13 +85,6 @@ export interface ScreenshotRequestMessage {
   hasAudio: boolean;
 }
 
-export interface AnswerMessage {
-  type: "answer";
-  text: string;
-  highlights: Highlight[];
-  hasAudio: boolean;
-}
-
 export interface ErrorMessage {
   type: "error";
   message: string;
@@ -101,10 +94,21 @@ export interface CancelledMessage {
   type: "cancelled";
 }
 
+export interface AnswerStartMessage {
+  type: "answer_start";
+}
+
+export interface AnswerEndMessage {
+  type: "answer_end";
+  text: string;
+  highlights: Highlight[];
+}
+
 export type ServerMessage =
   | TranscriptMessage
   | ScreenshotRequestMessage
-  | AnswerMessage
+  | AnswerStartMessage
+  | AnswerEndMessage
   | ErrorMessage
   | CancelledMessage;
 

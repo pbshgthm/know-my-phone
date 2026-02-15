@@ -80,47 +80,46 @@ export async function transcribeAudio(
   return transcript;
 }
 
-export async function textToSpeech(
+// Streaming TTS model — use env override or default to eleven_v3
+// (same model as the non-streaming text-to-dialogue endpoint).
+const STREAMING_TTS_MODEL =
+  process.env.ELEVENLABS_STREAMING_MODEL || "eleven_v3";
+
+export async function* streamTextToSpeech(
   text: string,
   languageCode: string,
   signal?: AbortSignal
-): Promise<Buffer> {
+): AsyncGenerator<Buffer> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
-    console.error(`[ElevenLabs] ❌ ELEVENLABS_API_KEY not set in environment`);
     throw new Error("ELEVENLABS_API_KEY not set");
   }
 
   const voiceId = resolveVoiceId(languageCode);
 
-  console.log(`[ElevenLabs] 🔊 Generating TTS via text-to-dialogue (${text.length} chars, voice: ${voiceId}, lang: ${languageCode})...`);
+  console.log(
+    `[ElevenLabs] 🔊 Streaming TTS (${text.length} chars, voice: ${voiceId}, model: ${STREAMING_TTS_MODEL})...`
+  );
 
   const fetchSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
     : AbortSignal.timeout(15_000);
 
   const response = await fetch(
-    `${ELEVENLABS_BASE_URL}/text-to-dialogue?output_format=mp3_44100_128`,
+    `${ELEVENLABS_BASE_URL}/text-to-speech/${voiceId}/stream?output_format=pcm_24000`,
     {
       method: "POST",
       headers: {
         "xi-api-key": apiKey,
         "Content-Type": "application/json",
-        Accept: "audio/mpeg",
       },
       body: JSON.stringify({
-        inputs: [
-          {
-            text,
-            voice_id: voiceId,
-          },
-        ],
-        model_id: "eleven_v3",
-        language_code: languageCode,
-        settings: {
-          stability: 1.0,
+        text,
+        model_id: STREAMING_TTS_MODEL,
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
         },
-        apply_text_normalization: "on",
       }),
       signal: fetchSignal,
     }
@@ -128,13 +127,64 @@ export async function textToSpeech(
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`[ElevenLabs] ❌ API error ${response.status}: ${errorText}`);
-    throw new Error(`ElevenLabs API error ${response.status}: ${errorText}`);
+    throw new Error(
+      `ElevenLabs streaming TTS error ${response.status}: ${errorText}`
+    );
   }
 
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  console.log(`[ElevenLabs] ✅ TTS generated successfully (${buffer.length} bytes MP3)`);
+  // Safety: verify we actually got PCM back, not MP3 (the default).
+  // If ElevenLabs ignores the output_format param, Content-Type will be audio/mpeg.
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("mpeg") || contentType.includes("mp3")) {
+    throw new Error(
+      `ElevenLabs returned MP3 instead of PCM (content-type: ${contentType}). ` +
+        `The output_format=pcm_24000 param may not be supported for model ${STREAMING_TTS_MODEL}.`
+    );
+  }
 
-  return buffer;
+  if (!response.body) {
+    throw new Error("ElevenLabs returned no stream body");
+  }
+
+  const reader = response.body.getReader();
+  let totalBytes = 0;
+  let carryByte: number | null = null; // for 16-bit sample alignment
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      let chunk = Buffer.from(value);
+
+      // Ensure every chunk we yield is sample-aligned (even number of bytes)
+      // for 16-bit PCM. Carry over a trailing odd byte to the next chunk.
+      if (carryByte !== null) {
+        chunk = Buffer.concat([Buffer.from([carryByte]), chunk]);
+        carryByte = null;
+      }
+      if (chunk.length % 2 !== 0) {
+        carryByte = chunk[chunk.length - 1];
+        chunk = chunk.subarray(0, chunk.length - 1);
+      }
+
+      if (chunk.length > 0) {
+        totalBytes += chunk.length;
+        yield chunk;
+      }
+    }
+
+    // Yield any remaining carry byte (pad with zero to complete the sample)
+    if (carryByte !== null) {
+      const last = Buffer.from([carryByte, 0]);
+      totalBytes += last.length;
+      yield last;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  console.log(
+    `[ElevenLabs] ✅ Streaming TTS complete (${totalBytes} bytes PCM)`
+  );
 }

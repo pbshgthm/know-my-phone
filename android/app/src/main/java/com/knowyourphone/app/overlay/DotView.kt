@@ -15,10 +15,8 @@ import android.view.animation.LinearInterpolator
 import android.view.animation.OvershootInterpolator
 import androidx.core.graphics.PathParser
 import com.knowyourphone.app.state.AssistantState
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.pow
-import kotlin.math.sin
 
 class DotView(context: Context) : View(context) {
     companion object {
@@ -71,7 +69,9 @@ class DotView(context: Context) : View(context) {
     }
 
     private val eqBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
+        style = Paint.Style.STROKE
+        strokeWidth = dp(2.2f)
+        strokeCap = Paint.Cap.ROUND
         color = COLOR_ICON
     }
 
@@ -112,31 +112,7 @@ class DotView(context: Context) : View(context) {
 
     private var audioLevel = 0f
     private var playbackLevel = 0f
-    private var inputReference = 0.18f
-    private var playbackReference = 0.18f
-    private var inputDrive = 0f
-    private var playbackDrive = 0f
-    private var previousInputDrive = 0f
-    private var previousPlaybackDrive = 0f
-    private val eqBarLevels = FloatArray(21) { 0f }
-    private val eqBarSignature = FloatArray(21) { i ->
-        val wave = 0.6f * sin((i + 1) * 1.37f) + 0.4f * sin((i + 1) * 0.71f)
-        wave * 0.18f
-    }
-    private val eqAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-        duration = 32
-        repeatCount = ValueAnimator.INFINITE
-        interpolator = LinearInterpolator()
-        addUpdateListener {
-            val sample = when (currentState) {
-                AssistantState.LISTENING -> inputDrive
-                AssistantState.SPEAKING -> playbackDrive
-                else -> 0f
-            }
-            pushHistorySample(sample)
-            invalidate()
-        }
-    }
+    private val waveformHistory = FloatArray(180) { 0f }
 
     // Width animation for smooth pill size transitions
     private var animatedWidth = 0f
@@ -196,30 +172,26 @@ class DotView(context: Context) : View(context) {
         eqBarPaint.color = if (state == AssistantState.IDLE) COLOR_ICON_MUTED else COLOR_ICON
 
         loaderAnimator.cancel()
-        eqAnimator.cancel()
         loaderRotation = 0f
 
         when (state) {
-            AssistantState.LISTENING -> eqAnimator.start()
             AssistantState.THINKING -> loaderAnimator.start()
-            AssistantState.SPEAKING -> eqAnimator.start()
             else -> {
                 audioLevel = 0f
                 playbackLevel = 0f
-                inputReference = 0.18f
-                playbackReference = 0.18f
-                inputDrive = 0f
-                playbackDrive = 0f
-                previousInputDrive = 0f
-                previousPlaybackDrive = 0f
-                clearHistory()
                 /* no animation */
             }
         }
 
-        if ((state == AssistantState.LISTENING || state == AssistantState.SPEAKING) && state != previousState) {
-            previousInputDrive = 0f
-            previousPlaybackDrive = 0f
+        if (state != previousState) {
+            when (state) {
+                AssistantState.LISTENING -> playbackLevel = 0f
+                AssistantState.SPEAKING -> audioLevel = 0f
+                else -> {
+                    audioLevel = 0f
+                    playbackLevel = 0f
+                }
+            }
             clearHistory()
         }
 
@@ -228,31 +200,19 @@ class DotView(context: Context) : View(context) {
     }
 
     fun setAudioLevel(level: Float) {
+        if (currentState != AssistantState.LISTENING) return
         val clamped = level.coerceIn(0f, 1f)
-        audioLevel = audioLevel * 0.55f + clamped * 0.45f
-        inputReference = updateReference(inputReference, audioLevel)
-        val targetDrive = normalizedDrive(audioLevel, inputReference)
-        val transient = abs(targetDrive - previousInputDrive)
-        previousInputDrive = targetDrive
-        val motion = (targetDrive * 0.72f + transient * 1.10f).coerceIn(0f, 1f)
-        inputDrive = inputDrive * 0.38f + motion * 0.62f
-        if (currentState == AssistantState.LISTENING) {
-            invalidate()
-        }
+        audioLevel = audioLevel * 0.20f + clamped * 0.80f
+        appendWaveSample(shapeWaveSample(audioLevel, gate = 0.018f))
+        invalidate()
     }
 
     fun setPlaybackLevel(level: Float) {
+        if (currentState != AssistantState.SPEAKING) return
         val clamped = level.coerceIn(0f, 1f)
-        playbackLevel = playbackLevel * 0.52f + clamped * 0.48f
-        playbackReference = updateReference(playbackReference, playbackLevel)
-        val targetDrive = normalizedDrive(playbackLevel, playbackReference)
-        val transient = abs(targetDrive - previousPlaybackDrive)
-        previousPlaybackDrive = targetDrive
-        val motion = (targetDrive * 0.74f + transient * 1.00f).coerceIn(0f, 1f)
-        playbackDrive = playbackDrive * 0.42f + motion * 0.58f
-        if (currentState == AssistantState.SPEAKING) {
-            invalidate()
-        }
+        playbackLevel = playbackLevel * 0.28f + clamped * 0.72f
+        appendWaveSample(shapeWaveSample(playbackLevel, gate = 0.012f))
+        invalidate()
     }
 
     fun setConnectionState(state: ConnectionState) {
@@ -420,64 +380,44 @@ class DotView(context: Context) : View(context) {
         val zoneWidth = right - left
         if (zoneWidth <= 0f) return
 
-        val gap = dp(2f)
-        val maxBarWidth = dp(3f)
-        var barCount = ((zoneWidth + gap) / (maxBarWidth + gap)).toInt().coerceIn(13, 21)
-        if (barCount % 2 == 0) barCount -= 1
-
-        val barWidth = ((zoneWidth - gap * (barCount - 1)) / barCount)
-            .coerceAtLeast(dp(1.5f))
-            .coerceAtMost(maxBarWidth)
-        val usedWidth = barCount * barWidth + (barCount - 1) * gap
+        val spacing = dp(3.8f)
+        val minHalfWave = dp(1.4f)
+        val maxHalfWave = dp(13f)
+        val barCount = (zoneWidth / spacing).toInt().coerceIn(12, waveformHistory.size)
+        val usedWidth = spacing * (barCount - 1)
         var x = left + (zoneWidth - usedWidth) / 2f
+        val historyStart = (waveformHistory.size - barCount).coerceAtLeast(0)
 
-        val minBarHeight = dp(2f)
-        val maxBarHeight = dp(30f)
-        val historyStart = (eqBarLevels.size - barCount).coerceAtLeast(0)
-
+        eqBarPaint.alpha = 255
         for (i in 0 until barCount) {
             val historyIndex = historyStart + i
-            val levelHistory = eqBarLevels[historyIndex].coerceIn(0f, 1f)
-            val signature = (1f + eqBarSignature[historyIndex] * 0.03f).coerceIn(0.97f, 1.03f)
-            val level = (levelHistory * signature).coerceIn(0f, 1f)
-
-            val barHeight = minBarHeight + (maxBarHeight - minBarHeight) * level
-            val top = centerY - barHeight / 2f
-            val bottom = centerY + barHeight / 2f
-            val radius = barWidth / 2f
-
-            canvas.drawRoundRect(x, top, x + barWidth, bottom, radius, radius, eqBarPaint)
-            x += barWidth + gap
+            val sample = waveformHistory[historyIndex].coerceIn(0f, 1f)
+            val halfWave = minHalfWave + (maxHalfWave - minHalfWave) * sample
+            val olderFade = if (barCount <= 1) 1f else i.toFloat() / (barCount - 1).toFloat()
+            eqBarPaint.alpha = (96f + 159f * olderFade).toInt().coerceIn(0, 255)
+            canvas.drawLine(x, centerY - halfWave, x, centerY + halfWave, eqBarPaint)
+            x += spacing
         }
+
+        eqBarPaint.alpha = 255
     }
 
-    private fun updateReference(reference: Float, current: Float): Float {
-        if (current > reference) {
-            return reference * 0.70f + current * 0.30f
-        }
-        // Slow decay keeps normalization stable across short pauses.
-        return reference * 0.985f + current * 0.015f
-    }
-
-    private fun normalizedDrive(current: Float, reference: Float): Float {
-        val denom = (reference * 1.65f + 0.045f).coerceAtLeast(0.085f)
-        val normalized = (current / denom).coerceIn(0f, 1.2f)
-        val compressed = normalized.pow(0.95f).coerceIn(0f, 1f)
-        val gate = ((current - 0.020f) / 0.045f).coerceIn(0f, 1f)
-        return (compressed * gate).coerceIn(0f, 1f)
-    }
-
-    private fun pushHistorySample(sample: Float) {
+    private fun appendWaveSample(sample: Float) {
         val clamped = sample.coerceIn(0f, 1f)
-        for (i in 0 until eqBarLevels.lastIndex) {
-            eqBarLevels[i] = eqBarLevels[i + 1]
+        for (i in 0 until waveformHistory.lastIndex) {
+            waveformHistory[i] = waveformHistory[i + 1]
         }
-        eqBarLevels[eqBarLevels.lastIndex] = clamped
+        waveformHistory[waveformHistory.lastIndex] = clamped
+    }
+
+    private fun shapeWaveSample(level: Float, gate: Float): Float {
+        val gated = ((level - gate) / (1f - gate)).coerceIn(0f, 1f)
+        return gated.pow(0.58f).coerceIn(0f, 1f)
     }
 
     private fun clearHistory() {
-        for (i in eqBarLevels.indices) {
-            eqBarLevels[i] = 0f
+        for (i in waveformHistory.indices) {
+            waveformHistory[i] = 0f
         }
     }
 
@@ -566,7 +506,6 @@ class DotView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         loaderAnimator.cancel()
-        eqAnimator.cancel()
         widthAnimator?.cancel()
     }
 }

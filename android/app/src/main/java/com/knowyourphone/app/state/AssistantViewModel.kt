@@ -6,8 +6,9 @@ import android.util.Base64
 import android.util.Log
 import com.google.gson.Gson
 import com.knowyourphone.app.KypAccessibilityService
-import com.knowyourphone.app.audio.AudioPlayer
 import com.knowyourphone.app.audio.AudioRecorder
+import com.knowyourphone.app.audio.StreamingAudioPlayer
+import kotlinx.coroutines.channels.Channel
 import com.knowyourphone.app.model.HighlightTarget
 import com.knowyourphone.app.network.*
 import com.knowyourphone.app.privacy.PiiRedactor
@@ -57,7 +58,6 @@ class AssistantViewModel(
     val playbackLevel: StateFlow<Float> = _playbackLevel
 
     private val audioRecorder = AudioRecorder()
-    private val audioPlayer = AudioPlayer(context)
 
     private var sessionId: String = UUID.randomUUID().toString()
     private var languageCode: String = getPreferredLanguageCode()
@@ -68,18 +68,19 @@ class AssistantViewModel(
             .getBoolean("auto_screenshot", false)
     }
 
-    // The binary frame we expect after an "answer" text frame
-    // Both fields set synchronously on OkHttp reader thread to avoid race with binary frame
-    @Volatile
-    private var expectingMp3Binary = false
     @Volatile
     private var pendingHighlights: List<HighlightTarget> = emptyList()
-    @Volatile
-    private var pendingScreenshotRequest = false
     @Volatile
     private var smoothedInputLevel = 0f
     @Volatile
     private var smoothedPlaybackLevel = 0f
+
+    // Streaming audio state
+    @Volatile
+    private var streamingAudio = false
+    private var streamingPlayer: StreamingAudioPlayer? = null
+    private var pcmChannel: Channel<ByteArray>? = null
+    private var pcmConsumerJob: Job? = null
 
     private val wsClient: WsClient = WsClient(
         onMessage = { text -> handleServerMessage(text) },
@@ -150,13 +151,12 @@ class AssistantViewModel(
             AssistantState.LISTENING -> { /* already listening */ }
             AssistantState.THINKING -> {
                 sendCancel()
-                expectingMp3Binary = false
+                stopStreamingPlayer()
                 startListening()
             }
             AssistantState.SPEAKING -> {
-                audioPlayer.stop()
+                stopStreamingPlayer()
                 sendCancel()
-                expectingMp3Binary = false
                 _playbackLevel.value = 0f
                 smoothedPlaybackLevel = 0f
                 startListening()
@@ -208,7 +208,7 @@ class AssistantViewModel(
             }
             AssistantState.THINKING -> {
                 sendCancel()
-                expectingMp3Binary = false
+                stopStreamingPlayer()
                 _inputLevel.value = 0f
                 smoothedInputLevel = 0f
                 _playbackLevel.value = 0f
@@ -219,7 +219,7 @@ class AssistantViewModel(
                 onScreenshotDecline()
             }
             AssistantState.SPEAKING -> {
-                audioPlayer.stop()
+                stopStreamingPlayer()
                 _highlights.value = emptyList()
                 highlightDismissJob?.cancel()
                 pendingHighlights = emptyList()
@@ -248,7 +248,7 @@ class AssistantViewModel(
         _playbackLevel.value = 0f
         smoothedPlaybackLevel = 0f
         val started = audioRecorder.startRecording(scope) { level ->
-            val smoothed = smoothedInputLevel * 0.45f + level * 0.55f
+            val smoothed = smoothedInputLevel * 0.15f + level * 0.85f
             smoothedInputLevel = smoothed
             _inputLevel.value = smoothed
         }
@@ -321,21 +321,77 @@ class AssistantViewModel(
     private fun handleServerMessage(json: String) {
         val message = MessageParser.parseServerMessage(json) ?: return
 
-        // For Answer messages, set flags synchronously on OkHttp's reader thread
-        // BEFORE the binary frame callback fires (OkHttp reader is single-threaded)
-        if (message is ServerMessage.Answer) {
-            Log.d(TAG, "Answer: ${message.text}, highlights: ${message.highlights.size}, hasAudio: ${message.hasAudio}")
+        // AnswerStart: begin streaming audio mode — set flag on OkHttp reader thread
+        if (message is ServerMessage.AnswerStart) {
+            Log.d(TAG, "AnswerStart: streaming audio begins")
+
+            // Create channel SYNCHRONOUSLY on the reader thread so binary frames
+            // arriving immediately after this message are buffered (not dropped).
+            val channel = Channel<ByteArray>(Channel.UNLIMITED)
+            pcmChannel = channel
+            streamingAudio = true  // must be set AFTER channel is assigned
+
+            // Create player + consumer on Main (channel buffers until ready)
+            scope.launch(Dispatchers.Main) {
+                _inputLevel.value = 0f
+                smoothedInputLevel = 0f
+                _playbackLevel.value = 0f
+                smoothedPlaybackLevel = 0f
+                _state.value = AssistantState.SPEAKING
+
+                val player = StreamingAudioPlayer()
+                player.onLevelChanged = { level ->
+                    val smoothed = smoothedPlaybackLevel * 0.20f + level * 0.80f
+                    smoothedPlaybackLevel = smoothed
+                    _playbackLevel.value = smoothed
+                }
+                streamingPlayer = player
+                player.start()
+
+                // Single consumer coroutine writes PCM chunks in order.
+                // All chunks sent before this point are already buffered in channel.
+                pcmConsumerJob = scope.launch(Dispatchers.IO) {
+                    for (chunk in channel) {
+                        player.writeChunk(chunk)
+                    }
+                }
+            }
+            return
+        }
+
+        // AnswerEnd: streaming complete — finalize playback
+        if (message is ServerMessage.AnswerEnd) {
+            Log.d(TAG, "AnswerEnd: text=${message.text.take(50)}, highlights=${message.highlights.size}")
+            streamingAudio = false
             pendingHighlights = message.highlights
-            pendingScreenshotRequest = false
-            if (message.hasAudio) {
-                expectingMp3Binary = true
-                Log.d(TAG, "Set expectingMp3Binary=true, waiting for audio binary")
-            } else {
-                expectingMp3Binary = false
-                Log.d(TAG, "No audio, transitioning directly")
-                _errorMessage.value = "Audio unavailable"
-                // No audio coming — show highlights independently and go to IDLE
-                scope.launch(Dispatchers.Main) {
+
+            scope.launch(Dispatchers.Main) {
+                // Close the channel so the consumer finishes
+                pcmChannel?.close()
+                pcmConsumerJob?.join()
+                pcmChannel = null
+                pcmConsumerJob = null
+
+                // Tell player all data is written — it polls for completion
+                val player = streamingPlayer
+                if (player != null) {
+                    player.onCompletion = {
+                        scope.launch(Dispatchers.Main) {
+                            if (pendingHighlights.isNotEmpty()) {
+                                _highlights.value = pendingHighlights
+                                scheduleHighlightDismiss()
+                            }
+                            _inputLevel.value = 0f
+                            smoothedInputLevel = 0f
+                            _playbackLevel.value = 0f
+                            smoothedPlaybackLevel = 0f
+                            _state.value = AssistantState.IDLE
+                            streamingPlayer = null
+                        }
+                    }
+                    player.finish()
+                } else {
+                    // No player (answer_end without answer_start = text-only error recovery)
                     if (pendingHighlights.isNotEmpty()) {
                         _highlights.value = pendingHighlights
                         scheduleHighlightDismiss()
@@ -350,19 +406,12 @@ class AssistantViewModel(
             return
         }
 
+        // ScreenshotRequest: always transitions to NEED_SCREENSHOT
         if (message is ServerMessage.ScreenshotRequest) {
-            Log.d(TAG, "Screenshot request: ${message.reason}, hasAudio=${message.hasAudio}")
+            Log.d(TAG, "Screenshot request: ${message.reason}")
             _screenshotReason.value = message.reason
-            pendingHighlights = emptyList()
-            pendingScreenshotRequest = true
-            if (message.hasAudio) {
-                expectingMp3Binary = true
-                Log.d(TAG, "Set expectingMp3Binary=true for screenshot request")
-            } else {
-                expectingMp3Binary = false
-                scope.launch(Dispatchers.Main) {
-                    _state.value = AssistantState.NEED_SCREENSHOT
-                }
+            scope.launch(Dispatchers.Main) {
+                _state.value = AssistantState.NEED_SCREENSHOT
             }
             return
         }
@@ -380,12 +429,14 @@ class AssistantViewModel(
                     _state.value = AssistantState.NEED_SCREENSHOT
                 }
 
-                is ServerMessage.Answer -> { /* handled above */ }
+                is ServerMessage.AnswerStart -> { /* handled above */ }
+                is ServerMessage.AnswerEnd -> { /* handled above */ }
                 is ServerMessage.ScreenshotRequest -> { /* handled above */ }
 
                 is ServerMessage.Error -> {
                     Log.e(TAG, "Server error: ${message.message}")
                     _errorMessage.value = message.message
+                    stopStreamingPlayer()
                     _inputLevel.value = 0f
                     smoothedInputLevel = 0f
                     _playbackLevel.value = 0f
@@ -395,54 +446,27 @@ class AssistantViewModel(
 
                 is ServerMessage.Cancelled -> {
                     Log.d(TAG, "Server acknowledged cancellation")
-                    // State already updated by press handlers, nothing to do
                 }
             }
         }
     }
 
     private fun handleBinaryMessage(data: ByteArray) {
-        Log.d(TAG, "handleBinaryMessage: ${data.size} bytes, expectingMp3Binary=$expectingMp3Binary")
-        if (expectingMp3Binary) {
-            expectingMp3Binary = false
-            scope.launch(Dispatchers.Main) {
-                Log.d(TAG, "Setting state to SPEAKING and playing audio")
-                _inputLevel.value = 0f
-                smoothedInputLevel = 0f
-                _playbackLevel.value = 0f
-                smoothedPlaybackLevel = 0f
-                _state.value = AssistantState.SPEAKING
-                audioPlayer.playMp3Bytes(
-                    mp3Data = data,
-                    onLevelChanged = { level ->
-                        val smoothed = smoothedPlaybackLevel * 0.35f + level * 0.65f
-                        smoothedPlaybackLevel = smoothed
-                        _playbackLevel.value = smoothed
-                    }
-                ) {
-                    // Playback complete
-                    scope.launch(Dispatchers.Main) {
-                        if (pendingScreenshotRequest) {
-                            pendingScreenshotRequest = false
-                            _playbackLevel.value = 0f
-                            smoothedPlaybackLevel = 0f
-                            _state.value = AssistantState.NEED_SCREENSHOT
-                        } else {
-                            // Show highlights independently, pill goes to IDLE
-                            if (pendingHighlights.isNotEmpty()) {
-                                _highlights.value = pendingHighlights
-                                scheduleHighlightDismiss()
-                            }
-                            _inputLevel.value = 0f
-                            smoothedInputLevel = 0f
-                            _playbackLevel.value = 0f
-                            smoothedPlaybackLevel = 0f
-                            _state.value = AssistantState.IDLE
-                        }
-                    }
-                }
-            }
+        if (streamingAudio) {
+            pcmChannel?.trySend(data)
+        } else {
+            Log.w(TAG, "Unexpected binary message: ${data.size} bytes (not streaming)")
         }
+    }
+
+    private fun stopStreamingPlayer() {
+        streamingAudio = false
+        pcmChannel?.close()
+        pcmConsumerJob?.cancel()
+        pcmChannel = null
+        pcmConsumerJob = null
+        streamingPlayer?.stop()
+        streamingPlayer = null
     }
 
     private fun scheduleHighlightDismiss() {
@@ -553,13 +577,12 @@ class AssistantViewModel(
 
     fun resetSession() {
         sendCancel()
+        stopStreamingPlayer()
         // Generate a fresh session ID
         sessionId = UUID.randomUUID().toString()
         wsClient.sendText(MessageParser.toJson(ResetSessionMessage()))
         sendHello()
         sendLanguage()
-        expectingMp3Binary = false
-        pendingScreenshotRequest = false
         pendingHighlights = emptyList()
         _inputLevel.value = 0f
         smoothedInputLevel = 0f
@@ -606,7 +629,7 @@ class AssistantViewModel(
 
     fun destroy() {
         highlightDismissJob?.cancel()
-        audioPlayer.stop()
+        stopStreamingPlayer()
         if (audioRecorder.isCurrentlyRecording()) {
             audioRecorder.stopRecording()
         }

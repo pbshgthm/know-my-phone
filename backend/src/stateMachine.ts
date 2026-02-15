@@ -1,23 +1,26 @@
 import type WebSocket from "ws";
 import type { Session } from "./session.js";
 import type {
-  AnswerMessage,
   ScreenshotResponseMessage,
   AnalysisResult,
   UiTree,
-  RedactionInfo,
 } from "./protocol.js";
 import { addToHistory, getHistoryForLLM } from "./session.js";
-import { transcribeAudio, textToSpeech } from "./services/elevenlabs.js";
-import { triageQuery, visualAnalysis, textAnalysis } from "./services/openrouter.js";
+import { transcribeAudio, streamTextToSpeech } from "./services/elevenlabs.js";
+import {
+  triageQuery,
+  streamVisualAnalysis,
+  streamTextAnalysis,
+} from "./services/openrouter.js";
 import {
   startTurn,
   updateTurn,
   saveAudioInput,
+  saveAudioOutput,
   saveScreenshot,
   saveUiTree,
-  saveAudioOutput,
 } from "./dataStore.js";
+import { StreamingAnswerParser, stripAudioTags } from "./streamParser.js";
 
 function sendJSON(ws: WebSocket, data: object): void {
   if (ws.readyState === ws.OPEN) {
@@ -33,14 +36,6 @@ function sendBinary(ws: WebSocket, data: Buffer): void {
 
 function sendError(ws: WebSocket, message: string): void {
   sendJSON(ws, { type: "error", message });
-}
-
-/**
- * Strip ElevenLabs v3 audio tags (e.g. [warmly], [cheerfully]) from text
- * before storing in conversation history, so tags don't accumulate in context.
- */
-function stripAudioTags(text: string): string {
-  return text.replace(/\[[\w\s]+\]\s*/g, "").trim();
 }
 
 /** Fire-and-forget helper that logs errors */
@@ -154,7 +149,7 @@ export async function handleAudioReceived(
 
   try {
     // Step 1: STT
-    console.log(`[${session.id}] 📝 Step 1/4: Transcribing audio (${audioBuffer.length} bytes)...`);
+    console.log(`[${session.id}] 📝 Step 1: Transcribing audio (${audioBuffer.length} bytes)...`);
     saveTiming(session.clientId, session.id, turnId, { sttStartedAt: Date.now() });
     const startSTT = Date.now();
     const transcript = await transcribeAudio(audioBuffer, session.languageCode, signal);
@@ -211,8 +206,8 @@ export async function handleAudioReceived(
             .then((file) => updateTurn(session.clientId, session.id, turnId, { uiTreeFile: file }))
             .catch((err) => console.error(`[DataStore] Failed to save UI tree:`, err));
 
-          saveTiming(session.clientId, session.id, turnId, { analysisStartedAt: Date.now() });
-          const result = await visualAnalysis(
+          saveTiming(session.clientId, session.id, turnId, { llmStartedAt: Date.now() });
+          const generator = streamVisualAnalysis(
             transcript,
             msg.screenshot,
             msg.uiTree,
@@ -221,8 +216,7 @@ export async function handleAudioReceived(
             session.autoScreenshot,
             msg.redactions
           );
-          saveTiming(session.clientId, session.id, turnId, { analysisCompletedAt: Date.now() });
-          await sendAnswer(ws, session, result, signal, transcript);
+          await streamAnswerToClient(ws, session, generator, signal, transcript);
         }
         // else: screenshot not yet arrived, handleScreenshotResponse will pick it up
       }
@@ -230,9 +224,7 @@ export async function handleAudioReceived(
     }
 
     // Step 2: Triage - does this need a screenshot?
-    // NOTE: User message is NOT added to history yet to avoid duplication
-    // (triage and analysis functions append the user message themselves)
-    console.log(`[${session.id}] 🤔 Step 2/4: Running triage query...`);
+    console.log(`[${session.id}] 🤔 Step 2: Running triage query...`);
     saveTiming(session.clientId, session.id, turnId, { triageStartedAt: Date.now() });
     const startTriage = Date.now();
     const triage = await triageQuery(transcript, getHistoryForLLM(session), signal, session.autoScreenshot);
@@ -247,7 +239,7 @@ export async function handleAudioReceived(
     });
 
     if (triage.needsScreenshot) {
-      // Store pending request with TTL and ask client for screenshot (no audio)
+      // Store pending request with TTL and ask client for screenshot
       const timer = setTimeout(() => {
         if (pendingScreenshots.has(session.id)) {
           pendingScreenshots.delete(session.id);
@@ -262,7 +254,7 @@ export async function handleAudioReceived(
         timer,
       });
 
-      console.log(`[${session.id}] 📸 Requesting screenshot from client (no audio)`);
+      console.log(`[${session.id}] 📸 Requesting screenshot from client`);
       saveTiming(session.clientId, session.id, turnId, { screenshotRequestedAt: Date.now() });
       sendJSON(ws, {
         type: "screenshot_request",
@@ -274,28 +266,22 @@ export async function handleAudioReceived(
       return;
     }
 
-    // Step 3: Text-only analysis (no screenshot needed)
-    console.log(`[${session.id}] 💭 Step 3/4: Running text analysis (no screenshot needed)...`);
+    // Step 3: Streaming text analysis (no screenshot needed)
+    console.log(`[${session.id}] 💭 Step 3: Running streaming text analysis...`);
     const emptyUiTree: UiTree = {
       screen: { packageName: "unknown", timestamp: Date.now() },
       nodes: [],
     };
-    saveTiming(session.clientId, session.id, turnId, { analysisStartedAt: Date.now() });
-    const startAnalysis = Date.now();
-    const result = await textAnalysis(
+    saveTiming(session.clientId, session.id, turnId, { llmStartedAt: Date.now() });
+    const textGenerator = streamTextAnalysis(
       transcript,
       emptyUiTree,
       getHistoryForLLM(session),
       signal,
       session.autoScreenshot
     );
-    const analysisTime = Date.now() - startAnalysis;
-    console.log(`[${session.id}] ✅ Analysis complete (${analysisTime}ms)`);
-    console.log(`[${session.id}] 📝 Answer: "${result.answer}"`);
-    console.log(`[${session.id}] 🎯 Highlights: ${result.highlights.length} items`);
-    saveTiming(session.clientId, session.id, turnId, { analysisCompletedAt: Date.now() });
 
-    await sendAnswer(ws, session, result, signal, transcript);
+    await streamAnswerToClient(ws, session, textGenerator, signal, transcript);
   } catch (err) {
     if ((err as Error).name === "AbortError") {
       console.log(`[${session.id}] 🚫 Audio pipeline aborted`);
@@ -349,9 +335,9 @@ export async function handleScreenshotResponse(
     if (message.redacted) {
       console.log(`[${session.id}] 🔒 Screenshot has PII redactions: ${message.redactions?.length ?? 0} types`);
     }
-    console.log(`[${session.id}] Running visual analysis with screenshot...`);
-    saveTiming(session.clientId, session.id, turnId, { analysisStartedAt: Date.now() });
-    const result = await visualAnalysis(
+    console.log(`[${session.id}] Running streaming visual analysis with screenshot...`);
+    saveTiming(session.clientId, session.id, turnId, { llmStartedAt: Date.now() });
+    const visualGenerator = streamVisualAnalysis(
       pending.userText,
       message.screenshot,
       message.uiTree,
@@ -360,9 +346,8 @@ export async function handleScreenshotResponse(
       session.autoScreenshot,
       message.redactions
     );
-    saveTiming(session.clientId, session.id, turnId, { analysisCompletedAt: Date.now() });
 
-    await sendAnswer(ws, session, result, signal, pending.userText);
+    await streamAnswerToClient(ws, session, visualGenerator, signal, pending.userText);
   } catch (err) {
     if ((err as Error).name === "AbortError") {
       console.log(`[${session.id}] 🚫 Visual analysis aborted`);
@@ -394,22 +379,21 @@ export async function handleScreenshotDeclined(
   const turnId = session.currentTurnId;
 
   try {
-    console.log(`[${session.id}] Screenshot declined, falling back to text analysis...`);
+    console.log(`[${session.id}] Screenshot declined, falling back to streaming text analysis...`);
     const emptyUiTree: UiTree = {
       screen: { packageName: "unknown", timestamp: Date.now() },
       nodes: [],
     };
-    saveTiming(session.clientId, session.id, turnId, { analysisStartedAt: Date.now() });
-    const result = await textAnalysis(
+    saveTiming(session.clientId, session.id, turnId, { llmStartedAt: Date.now() });
+    const declinedGenerator = streamTextAnalysis(
       pending.userText,
       emptyUiTree,
       getHistoryForLLM(session),
       signal,
       session.autoScreenshot
     );
-    saveTiming(session.clientId, session.id, turnId, { analysisCompletedAt: Date.now() });
 
-    await sendAnswer(ws, session, result, signal, pending.userText);
+    await streamAnswerToClient(ws, session, declinedGenerator, signal, pending.userText);
   } catch (err) {
     if ((err as Error).name === "AbortError") {
       console.log(`[${session.id}] 🚫 Fallback analysis aborted`);
@@ -420,85 +404,156 @@ export async function handleScreenshotDeclined(
   }
 }
 
-async function sendAnswer(
+/**
+ * Stream LLM output through sentence-level TTS and send PCM chunks to the client.
+ * Sends answer_start only when the first audio chunk is ready (client stays in
+ * THINKING until then). On error, sends answer_end with whatever text we have.
+ */
+async function streamAnswerToClient(
   ws: WebSocket,
   session: Session,
-  result: AnalysisResult,
-  signal?: AbortSignal,
-  userText?: string
+  analysisGenerator: AsyncGenerator<string>,
+  signal: AbortSignal,
+  userText: string
 ): Promise<void> {
-  // Add user message to history (deferred until after all LLM calls to avoid duplication)
-  if (userText) {
-    addToHistory(session, "user", userText);
-    console.log(`[${session.id}] 📚 Added user message to history`);
-  }
-
-  // Add assistant response to history (strip audio tags so they don't accumulate)
-  const cleanAnswer = stripAudioTags(result.answer);
-  addToHistory(session, "assistant", cleanAnswer);
-  console.log(`[${session.id}] 📚 Added assistant response to history`);
-
-  // Save assistant response to disk
+  const parser = new StreamingAnswerParser();
   const turnId = session.currentTurnId;
-  saveTiming(session.clientId, session.id, turnId, {
-    assistantText: cleanAnswer,
-    highlights: result.highlights,
-  });
+  let sentenceCount = 0;
+  let streamingStarted = false;
+  let firstTokenRecorded = false;
+  let firstAudioRecorded = false;
+  const pcmChunks: Buffer[] = [];
 
-  // Check if aborted before TTS
-  if (signal?.aborted) {
-    console.log(`[${session.id}] 🚫 Aborted before TTS`);
-    return;
+  /** Send answer_start right before the first PCM chunk, so the client
+   *  stays in THINKING until audio is actually ready to play. */
+  function ensureStreamStarted(): void {
+    if (!streamingStarted) {
+      if (!firstAudioRecorded) {
+        firstAudioRecorded = true;
+        saveTiming(session.clientId, session.id, turnId, { firstAudioSentAt: Date.now() });
+      }
+      sendJSON(ws, { type: "answer_start" });
+      streamingStarted = true;
+    }
   }
 
-  // Step 4: TTS (send original text with audio tags for expressive delivery)
-  console.log(`[${session.id}] 🔊 Step 4/4: Generating TTS for "${result.answer.substring(0, 50)}..."`);
-  saveTiming(session.clientId, session.id, turnId, { ttsStartedAt: Date.now() });
-  let mp3Buffer: Buffer;
-  const startTTS = Date.now();
   try {
-    mp3Buffer = await textToSpeech(result.answer, session.languageCode, signal);
-    const ttsTime = Date.now() - startTTS;
-    console.log(`[${session.id}] ✅ TTS generated (${mp3Buffer.length} bytes, ${ttsTime}ms)`);
-    saveTiming(session.clientId, session.id, turnId, { ttsCompletedAt: Date.now() });
+    // Feed LLM chunks to parser, TTS each sentence
+    for await (const chunk of analysisGenerator) {
+      if (signal.aborted) throw new Error("AbortError");
 
-    // Save TTS audio to disk
-    saveAudioOutput(session.clientId, session.id, turnId, mp3Buffer)
-      .then((file) => updateTurn(session.clientId, session.id, turnId, { assistantAudioFile: file }))
-      .catch((err) => console.error(`[DataStore] Failed to save TTS audio:`, err));
+      if (!firstTokenRecorded) {
+        firstTokenRecorded = true;
+        saveTiming(session.clientId, session.id, turnId, { llmFirstTokenAt: Date.now() });
+      }
+
+      const sentences = parser.feed(chunk);
+      for (const sentence of sentences) {
+        const clean = stripAudioTags(sentence);
+        if (!clean) continue;
+        sentenceCount++;
+        console.log(`[${session.id}] 🔊 Streaming TTS for sentence ${sentenceCount}: "${clean.substring(0, 50)}..."`);
+
+        for await (const pcmChunk of streamTextToSpeech(clean, session.languageCode, signal)) {
+          if (signal.aborted) throw new Error("AbortError");
+          ensureStreamStarted();
+          pcmChunks.push(pcmChunk);
+          sendBinary(ws, pcmChunk);
+        }
+      }
+    }
+
+    // LLM streaming done
+    saveTiming(session.clientId, session.id, turnId, { llmDoneAt: Date.now() });
+
+    // Flush remaining text
+    const remaining = parser.flush();
+    if (remaining) {
+      const clean = stripAudioTags(remaining);
+      if (clean) {
+        sentenceCount++;
+        console.log(`[${session.id}] 🔊 Streaming TTS for final fragment: "${clean.substring(0, 50)}..."`);
+        for await (const pcmChunk of streamTextToSpeech(clean, session.languageCode, signal)) {
+          if (signal.aborted) throw new Error("AbortError");
+          ensureStreamStarted();
+          pcmChunks.push(pcmChunk);
+          sendBinary(ws, pcmChunk);
+        }
+      }
+    }
+
+    // Parse full JSON for highlights
+    const rawOutput = parser.getRawOutput();
+    let cleanAnswer = "";
+    let highlights: Array<{ elementId: string; label: string }> = [];
+    try {
+      let cleaned = rawOutput.trim();
+      if (cleaned.startsWith("```")) {
+        cleaned = cleaned.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+      }
+      const parsed = JSON.parse(cleaned) as AnalysisResult;
+      cleanAnswer = stripAudioTags(parsed.answer);
+      highlights = parsed.highlights || [];
+    } catch {
+      // If JSON parse fails, use the extracted answer text
+      cleanAnswer = stripAudioTags(parser.flush() || rawOutput);
+    }
+
+    // Update conversation history
+    if (userText) {
+      addToHistory(session, "user", userText);
+    }
+    addToHistory(session, "assistant", cleanAnswer);
+
+    // Save timing data
+    saveTiming(session.clientId, session.id, turnId, {
+      assistantText: cleanAnswer,
+      highlights,
+      sentenceCount,
+      completedAt: Date.now(),
+    });
+
+    // Save audio output to disk for debugging (fire and forget)
+    if (pcmChunks.length > 0) {
+      saveAudioOutput(session.clientId, session.id, turnId, pcmChunks)
+        .then((file) => updateTurn(session.clientId, session.id, turnId, { assistantAudioFile: file }))
+        .catch((err) => console.error(`[DataStore] Failed to save audio output:`, err));
+    }
+
+    // Send answer_end with text and highlights
+    sendJSON(ws, { type: "answer_end", text: cleanAnswer, highlights });
+    console.log(`[${session.id}] ✅ Streaming complete! ${sentenceCount} sentences sent`);
   } catch (err) {
-    if ((err as Error).name === "AbortError") {
-      console.log(`[${session.id}] 🚫 TTS aborted`);
+    if ((err as Error).name === "AbortError" || (err as Error).message === "AbortError") {
+      console.log(`[${session.id}] 🚫 Streaming pipeline aborted`);
       return;
     }
-    console.error(`[${session.id}] ❌ TTS failed, sending text-only answer:`);
-    console.error(err);
-    saveTiming(session.clientId, session.id, turnId, { ttsCompletedAt: Date.now() });
-    // Send answer without audio if TTS fails
-    const answerMsg: AnswerMessage = {
-      type: "answer",
-      text: cleanAnswer,
-      highlights: result.highlights,
-      hasAudio: false,
-    };
-    sendJSON(ws, answerMsg);
-    saveTiming(session.clientId, session.id, turnId, { completedAt: Date.now() });
-    console.log(`[${session.id}] 📤 Sent text-only answer (no audio)`);
-    return;
-  }
+    console.error(`[${session.id}] ❌ Streaming pipeline failed:`, err);
 
-  // Send answer text message, then binary MP3
-  const answerMsg: AnswerMessage = {
-    type: "answer",
-    text: cleanAnswer,
-    highlights: result.highlights,
-    hasAudio: true,
-  };
-  console.log(`[${session.id}] 📤 Sending answer message + MP3 binary`);
-  sendJSON(ws, answerMsg);
-  sendBinary(ws, mp3Buffer);
-  saveTiming(session.clientId, session.id, turnId, { completedAt: Date.now() });
-  console.log(`[${session.id}] ✅ Complete! Answer sent to client\n`);
+    // Send answer_end with whatever text we managed to extract
+    const rawOutput = parser.getRawOutput();
+    let cleanAnswer = "";
+    let highlights: Array<{ elementId: string; label: string }> = [];
+    try {
+      let cleaned = rawOutput.trim();
+      if (cleaned.startsWith("```")) {
+        cleaned = cleaned.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+      }
+      const parsed = JSON.parse(cleaned) as AnalysisResult;
+      cleanAnswer = stripAudioTags(parsed.answer);
+      highlights = parsed.highlights || [];
+    } catch {
+      cleanAnswer = stripAudioTags(parser.flush() || "");
+    }
+
+    if (cleanAnswer) {
+      if (userText) addToHistory(session, "user", userText);
+      addToHistory(session, "assistant", cleanAnswer);
+      sendJSON(ws, { type: "answer_end", text: cleanAnswer, highlights });
+    } else {
+      sendError(ws, "Something went wrong processing your request. Please try again.");
+    }
+  }
 }
 
 export function cleanupSession(sessionId: string): void {

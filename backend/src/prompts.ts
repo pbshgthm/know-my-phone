@@ -27,15 +27,11 @@ You MUST respond with valid JSON only, no other text:
 
 const VOICE_DELIVERY_INSTRUCTIONS = `
 Voice delivery instructions:
-- Your answer will be spoken aloud using ElevenLabs v3 TTS.
+- Your answer will be spoken aloud using ElevenLabs TTS.
 - Write naturally with proper punctuation. Punctuation controls rhythm and pacing.
 - Use ellipses (...) for natural pauses.
-- You may OCCASIONALLY use ONE audio tag per response to set tone — but most responses need no tags at all.
-  - Allowed tags: [warmly], [gently], [cheerfully], [reassuringly]
-  - Place the tag only at the very start of the response if used.
-- Do NOT use multiple tags in one response — this causes audio artifacts.
-- Do NOT use sound effect tags, [laughs], [sighs], or non-speech audio.
-- Default to a warm, patient, helpful tone through word choice, not tags.`;
+- Do NOT use any audio tags like [warmly], [cheerfully], etc. — the TTS model does not support them and they will be spoken as literal text.
+- Default to a warm, patient, helpful tone through word choice alone.`;
 
 export const VISUAL_ANALYSIS_SYSTEM_PROMPT = `You are a helpful Android phone assistant. You help users understand what's on their screen and guide them to the next action.
 

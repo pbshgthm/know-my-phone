@@ -414,7 +414,7 @@ function renderTurn(t) {
   }
 
   // --- Assistant response ---
-  if (t.assistantText || (t.analysisStartedAt && !t.analysisCompletedAt)) {
+  if (t.assistantText || (t.llmStartedAt && !t.completedAt)) {
     h += `<div class="px-3 py-2">
       <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">assistant</div>`;
     if (t.assistantText) {
@@ -476,34 +476,57 @@ function renderTurn(t) {
   return el;
 }
 
-// --- Timing (single row) ---
+// --- Timing (streaming-aware two-row layout) ---
 function renderTimingTable(t) {
+  // Row 1: pipeline stages with arrows
   const stages = [];
   if (t.sttStartedAt)       stages.push({ label: 'stt',     start: t.sttStartedAt,       end: t.sttCompletedAt });
   if (t.triageStartedAt)    stages.push({ label: 'triage',  start: t.triageStartedAt,    end: t.triageCompletedAt });
   if (t.screenshotRequestedAt && t.screenshotReceivedAt) {
     stages.push({ label: 'ss wait', start: t.screenshotRequestedAt, end: t.screenshotReceivedAt });
   }
-  if (t.analysisStartedAt)  stages.push({ label: 'llm',     start: t.analysisStartedAt,  end: t.analysisCompletedAt });
-  if (t.ttsStartedAt)       stages.push({ label: 'tts',     start: t.ttsStartedAt,       end: t.ttsCompletedAt });
+  if (t.llmStartedAt && t.llmFirstTokenAt) {
+    stages.push({ label: 'llm\u21E2tok', start: t.llmStartedAt, end: t.llmFirstTokenAt });
+  } else if (t.llmStartedAt && !t.llmFirstTokenAt) {
+    stages.push({ label: 'llm\u21E2tok', start: t.llmStartedAt, end: null }); // still waiting for first token
+  }
+  if (t.firstAudioSentAt && t.audioReceivedAt) {
+    stages.push({ label: '1st\uD83D\uDD0A', start: t.audioReceivedAt, end: t.firstAudioSentAt, highlight: true });
+  }
   if (!stages.length) return '';
-
-  const totalStart = t.audioReceivedAt;
-  const totalEnd = t.completedAt;
-  const totalDur = totalEnd && totalStart ? totalEnd - totalStart : null;
 
   const parts = stages.map(s => {
     const dur = (s.end || Date.now()) - s.start;
     const done = !!s.end;
-    return `<span class="text-neutral-500">${s.label}</span> <span class="text-neutral-700 font-medium">${fmtDur(dur)}</span>${done ? '' : '<span class="pulse">\u2026</span>'}`;
+    const hl = s.highlight ? ' text-neutral-900 font-semibold' : ' text-neutral-700 font-medium';
+    return `<span class="text-neutral-500">${s.label}</span> <span class="${hl.trim()}">${fmtDur(dur)}</span>${done ? '' : '<span class="pulse">\u2026</span>'}`;
   });
 
-  let h = `<div class="px-3 py-1.5 border-b border-neutral-100 flex items-center gap-1 text-[10px] flex-wrap">`;
+  let h = `<div class="px-3 py-1 border-b border-neutral-100 flex items-center gap-1 text-[10px] flex-wrap">`;
   h += parts.join('<span class="text-neutral-300">\u2192</span>');
-  if (totalDur !== null) {
-    h += `<span class="text-neutral-300 ml-auto">=</span> <span class="text-neutral-700 font-medium">${fmtDur(totalDur)}</span>`;
-  }
   h += `</div>`;
+
+  // Row 2: summary stats (only if we have at least llmStartedAt)
+  if (t.llmStartedAt) {
+    const stats = [];
+    if (t.llmDoneAt) {
+      stats.push(`<span class="text-neutral-500">llm</span> <span class="text-neutral-700 font-medium">${fmtDur(t.llmDoneAt - t.llmStartedAt)}</span>`);
+    } else if (t.llmStartedAt && !t.completedAt) {
+      stats.push(`<span class="text-neutral-500">llm</span> <span class="text-neutral-700 font-medium">${fmtDur(Date.now() - t.llmStartedAt)}</span><span class="pulse">\u2026</span>`);
+    }
+    if (t.sentenceCount != null) {
+      stats.push(`<span class="text-neutral-700 font-medium">${t.sentenceCount}</span> <span class="text-neutral-500">sent</span>`);
+    }
+    if (t.completedAt && t.audioReceivedAt) {
+      stats.push(`<span class="text-neutral-500">total</span> <span class="text-neutral-700 font-medium">${fmtDur(t.completedAt - t.audioReceivedAt)}</span>`);
+    }
+    if (stats.length) {
+      h += `<div class="px-3 py-0.5 border-b border-neutral-100 flex items-center gap-1.5 text-[10px] justify-end">`;
+      h += stats.join('<span class="text-neutral-300">\u00B7</span>');
+      h += `</div>`;
+    }
+  }
+
   return h;
 }
 

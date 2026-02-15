@@ -6,6 +6,7 @@ import android.media.audiofx.Visualizer
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 class AudioPlayer(private val context: Context) {
@@ -106,7 +107,7 @@ class AudioPlayer(private val context: Context) {
                 enabled = false
                 val captureRange = Visualizer.getCaptureSizeRange()
                 captureSize = captureRange[1]
-                val captureRate = (Visualizer.getMaxCaptureRate() / 2).coerceAtLeast(4000)
+                val captureRate = Visualizer.getMaxCaptureRate()
 
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(
@@ -150,12 +151,15 @@ class AudioPlayer(private val context: Context) {
         if (waveform.isEmpty()) return 0f
 
         var sumSquares = 0.0
+        var peak = 0.0
         for (sample in waveform) {
             val centered = ((sample.toInt() and 0xFF) - 128) / 128.0
             sumSquares += centered * centered
+            peak = maxOf(peak, abs(centered))
         }
 
         val rms = sqrt(sumSquares / waveform.size)
-        return (rms * 2.0).coerceIn(0.0, 1.0).toFloat()
+        val blended = rms * 0.65 + peak * 0.35
+        return (blended * 1.8).coerceIn(0.0, 1.0).toFloat()
     }
 }

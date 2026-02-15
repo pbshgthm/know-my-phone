@@ -7,6 +7,7 @@ import android.media.MediaRecorder
 import android.util.Log
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 class AudioRecorder {
@@ -27,7 +28,7 @@ class AudioRecorder {
 
     val bufferSize: Int
         get() = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
-            .coerceAtLeast(4096)
+            .coerceAtLeast(2048)
 
     @SuppressLint("MissingPermission")
     fun startRecording(scope: CoroutineScope, onLevelChanged: ((Float) -> Unit)? = null): Boolean {
@@ -111,19 +112,21 @@ class AudioRecorder {
         if (bytesRead < 2) return 0f
 
         var sumSquares = 0.0
+        var peak = 0.0
         var sampleCount = 0
         var i = 0
         while (i + 1 < bytesRead) {
             val sample = (((buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xFF)).toShort()).toInt()
             val normalized = sample / 32768.0
             sumSquares += normalized * normalized
+            peak = maxOf(peak, abs(normalized))
             sampleCount++
             i += 2
         }
 
         if (sampleCount == 0) return 0f
         val rms = sqrt(sumSquares / sampleCount)
-        // Keep speech expressive but avoid constant saturation.
-        return (rms * 2.4).coerceIn(0.0, 1.0).toFloat()
+        val blended = rms * 0.70 + peak * 0.30
+        return (blended * 1.9).coerceIn(0.0, 1.0).toFloat()
     }
 }

@@ -131,7 +131,91 @@ function buildVisualAnalysisUserText(
   return text;
 }
 
-export async function visualAnalysis(
+// --- Streaming variants ---
+
+async function* streamChatCompletion(
+  messages: ChatMessage[],
+  model: string,
+  timeoutMs: number,
+  signal?: AbortSignal
+): AsyncGenerator<string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENROUTER_API_KEY not set");
+  }
+
+  console.log(`[OpenRouter] 🤖 Streaming ${model} with ${messages.length} messages...`);
+
+  const fetchSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+    : AbortSignal.timeout(timeoutMs);
+
+  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://know-your-phone.app",
+      "X-Title": "Know Your Phone",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.3,
+      max_tokens: 1024,
+      stream: true,
+    }),
+    signal: fetchSignal,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OpenRouter API error ${response.status}: ${text}`);
+  }
+
+  if (!response.body) {
+    throw new Error("OpenRouter returned no stream body");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      // Keep the last potentially incomplete line in buffer
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
+        const data = trimmed.slice(6);
+        if (data === "[DONE]") return;
+
+        try {
+          const parsed = JSON.parse(data) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+          };
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) {
+            yield content;
+          }
+        } catch {
+          // Skip malformed SSE chunks
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function* streamVisualAnalysis(
   userText: string,
   screenshotBase64: string,
   uiTree: UiTree,
@@ -139,7 +223,7 @@ export async function visualAnalysis(
   signal?: AbortSignal,
   autoScreenshot: boolean = false,
   redactions?: RedactionInfo[]
-): Promise<AnalysisResult> {
+): AsyncGenerator<string> {
   const messages: ChatMessage[] = [
     { role: "system", content: getVisualAnalysisPrompt(autoScreenshot) },
     ...conversationHistory.map((h) => ({
@@ -163,17 +247,16 @@ export async function visualAnalysis(
     },
   ];
 
-  const raw = await chatCompletion(messages, VISION_MODEL, 30_000, signal);
-  return parseJSON<AnalysisResult>(raw);
+  yield* streamChatCompletion(messages, VISION_MODEL, 30_000, signal);
 }
 
-export async function textAnalysis(
+export async function* streamTextAnalysis(
   userText: string,
   uiTree: UiTree,
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
   signal?: AbortSignal,
   autoScreenshot: boolean = false
-): Promise<AnalysisResult> {
+): AsyncGenerator<string> {
   const messages: ChatMessage[] = [
     { role: "system", content: getTextAnalysisPrompt(autoScreenshot) },
     ...conversationHistory.map((h) => ({
@@ -186,6 +269,5 @@ export async function textAnalysis(
     },
   ];
 
-  const raw = await chatCompletion(messages, TEXT_MODEL, 30_000, signal);
-  return parseJSON<AnalysisResult>(raw);
+  yield* streamChatCompletion(messages, TEXT_MODEL, 30_000, signal);
 }
