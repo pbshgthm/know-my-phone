@@ -203,11 +203,39 @@ Each session has an `AbortController`. Sending new audio or an explicit `cancel`
 
 ## 8. Debug UI
 
-The backend serves a single-page debug UI at `http://localhost:PORT/` (the same origin as the API). It is a conversation viewer for all data persisted to disk—useful during development and demos.
+The backend serves a single-page debug UI at `http://localhost:PORT/` (the same origin as the API). It is a conversation viewer for all data persisted to disk—useful during development and demos. Setup details (port, data folder, etc.) are in [get-started.md](get-started.md).
 
-The layout has a sidebar and a main area. The sidebar includes a client dropdown (populated from clients that have stored conversations), a list of conversations for the selected client, and a live indicator. The main area shows turn cards: each turn can be expanded or collapsed and displays the full pipeline breakdown—when audio was received, when STT completed, when triage ran, when a screenshot was requested and received, when the LLM ran, and when TTS finished. You can see the user transcript, play back the input and output audio, view the screenshot and UI tree side by side, and inspect the highlights that were sent to the client. The URL uses hash-based routing (`#client=X&conv=Y`) so you can share links to specific conversations.
+### Layout
 
-The UI fetches data from the REST API: `GET /api/clients`, `GET /api/clients/:clientId/conversations`, `GET /api/clients/:clientId/conversations/:convId` for the full conversation JSON, and `GET /api/data/:clientId/:convId/:type/:filename` for binary assets (screenshots, audio, UI trees). The conversation list is polled so new data appears as turns complete.
+The layout has a sidebar and a main area:
+
+- **Sidebar**: Client dropdown (populated from clients that have stored conversations), a list of conversations for the selected client, and a live indicator.
+- **Main area**: Turn cards—each turn can be expanded or collapsed and displays the full pipeline breakdown.
+
+### What each turn card shows
+
+Each turn card displays the pipeline stages and their timestamps. Use these to understand where latency comes from and what the LLM saw:
+
+| Timing field | Meaning |
+|--------------|---------|
+| `audioReceivedAt` | When the server received the user's audio |
+| `sttStartedAt` / `sttCompletedAt` | STT (speech-to-text) ran |
+| `triageStartedAt` / `triageCompletedAt` | Triage decided if a screenshot was needed |
+| `screenshotRequestedAt` | When the server asked the client for a screenshot |
+| `screenshotReceivedAt` | When the client sent the screenshot |
+| `llmStartedAt` / `llmFirstTokenAt` / `llmCompletedAt` | LLM inference |
+| `ttsFirstAudioAt` | When TTS started streaming audio to the client |
+| `completedAt` | When the turn finished |
+
+You can see the user transcript, play back the input and output audio, view the screenshot and UI tree side by side, and inspect the highlights that were sent to the client. The screenshot and UI tree show exactly what the LLM received (after PII redaction); the highlights show what the assistant told the user to tap.
+
+### Data source
+
+The UI reads from the `DATA_DIR` (see [get-started.md](get-started.md#data-folder)). The REST API: `GET /api/clients`, `GET /api/clients/:clientId/conversations`, `GET /api/clients/:clientId/conversations/:convId` for the full conversation JSON, and `GET /api/data/:clientId/:convId/:type/:filename` for binary assets (screenshots, audio, UI trees). The conversation list is polled so new data appears as turns complete.
+
+### URL routing
+
+The URL uses hash-based routing (`#client=X&conv=Y`) so you can share links to specific conversations.
 
 ---
 

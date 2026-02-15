@@ -1,5 +1,16 @@
 # Know My Phone
 
+*Ask your phone about it, not your nephew :)*
+
+| Doc | Description |
+|-----|-------------|
+| **[Get started](get-started.md)** | Backend and Android setup, env vars, voice models, data folder, debug UI |
+| **[How it works](how-it-works.md)** | Technical overview, UX flows, architecture, pill states, debug UI, WebSocket protocol |
+
+**📲 [Download APK](https://github.com/pbshgthm/know-my-phone/releases/download/latest/KnowMyPhone-latest.apk)** — direct download (latest build)
+
+---
+
 You're on a screen you don't understand. A popup, a new app, a setting you can't find. You ask someone. Or you go to a shop and hand over your phone. Or you give up.
 
 **Know My Phone** is for when you're stuck. Tap the mic, ask in your own voice (Tamil, Hindi, Kannada, Telugu, Malayalam, or English), and get a spoken answer with visual highlights that show exactly where to tap. No typing. No handing your phone to a stranger. The assistant reads your screen and guides you, step by step.
@@ -201,50 +212,6 @@ Building Know My Phone came with its share of hard problems:
 - **Voice model selection**: Trying out different STT and TTS models (accents, languages, quality, latency) to find a combination that works well for Indic languages and feels natural.
 
 - **Seamless UX flow**: Designing the full flow so it feels smooth: tap to listen, tap to send, optional screenshot request, spoken answer, highlights. Each transition had to be thought through so nothing feels abrupt or confusing.
-
----
-
-## Setup
-
-### Backend
-
-The backend is currently deployed on Replit at [https://know-my-phone.replit.app/](https://know-my-phone.replit.app/). You can use it as-is, or run locally for development.
-
-**Local development**
-
-1. Install dependencies and configure API keys:
-   ```bash
-   cd backend
-   npm install
-   cp .env.example .env
-   # Edit .env with your API keys (Anthropic, ElevenLabs)
-   ```
-
-2. Start the server:
-   ```bash
-   npm run dev   # or: npm start
-   ```
-   Server runs at `http://localhost:8765`.
-
-### Android
-
-**Download pre-built APK**
-
-- **[Releases](https://github.com/pbshgthm/know-my-phone/releases)** – Tag a version (e.g. `v1.0`) and the APK will be built and attached to the release.
-- **Latest build** – Open [Actions](https://github.com/pbshgthm/know-my-phone/actions), pick the latest successful run, and download the APK from the workflow artifacts.
-
-**Build from source**
-
-1. Open the `android` folder in Android Studio.
-2. **Port forwarding (required for dev)**: The app connects to the backend over WebSocket. When using a device or emulator, you must run the `adb-reverse` script so the device can reach the backend on your machine:
-   ```bash
-   ./adb-reverse start
-   ```
-   This forwards `tcp:8765` on the device to your host. Use `./adb-reverse stop` to clear it. You can also run `adb reverse tcp:8765 tcp:8765` manually.
-3. Build and run on device or emulator (minSdk 30+).
-4. Grant permissions: Microphone, Display over other apps, and Accessibility (enable manually in Settings).
-
-[How it works: Architecture, protocol, and technical details →](./how-it-works.md)
 
 ---
 
