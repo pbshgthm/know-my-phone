@@ -285,6 +285,18 @@ class OverlayService : Service() {
         }
 
         scope.launch {
+            viewModel.inputLevel.collect { level ->
+                dotView?.setAudioLevel(level)
+            }
+        }
+
+        scope.launch {
+            viewModel.playbackLevel.collect { level ->
+                dotView?.setPlaybackLevel(level)
+            }
+        }
+
+        scope.launch {
             viewModel.highlights.collect { targets ->
                 if (targets.isNotEmpty()) {
                     highlightView?.setHighlights(targets)

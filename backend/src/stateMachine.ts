@@ -9,6 +9,14 @@ import type {
 import { addToHistory, getHistoryForLLM } from "./session.js";
 import { transcribeAudio, textToSpeech } from "./services/elevenlabs.js";
 import { triageQuery, visualAnalysis, textAnalysis } from "./services/openrouter.js";
+import {
+  startTurn,
+  updateTurn,
+  saveAudioInput,
+  saveScreenshot,
+  saveUiTree,
+  saveAudioOutput,
+} from "./dataStore.js";
 
 function sendJSON(ws: WebSocket, data: object): void {
   if (ws.readyState === ws.OPEN) {
@@ -32,6 +40,18 @@ function sendError(ws: WebSocket, message: string): void {
  */
 function stripAudioTags(text: string): string {
   return text.replace(/\[[\w\s]+\]\s*/g, "").trim();
+}
+
+/** Fire-and-forget helper that logs errors */
+function saveTiming(
+  clientId: string,
+  sessionId: string,
+  turnId: number,
+  updates: Record<string, unknown>
+): void {
+  updateTurn(clientId, sessionId, turnId, updates).catch((err) =>
+    console.error(`[DataStore] Failed to save timing:`, err)
+  );
 }
 
 interface PendingScreenshotRequest {
@@ -92,9 +112,25 @@ export async function handleAudioReceived(
   const controller = resetSessionAbort(session.id);
   const signal = controller.signal;
 
+  // Increment turn counter and start tracking this turn
+  session.turnCounter++;
+  session.currentTurnId = session.turnCounter;
+  const turnId = session.currentTurnId;
+
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`[${session.id}] 🎬 Starting audio processing pipeline`);
+  console.log(`[${session.id}] 🎬 Starting audio processing pipeline (turn #${turnId})`);
   console.log(`${'='.repeat(60)}\n`);
+
+  // Save turn and audio to disk (fire and forget)
+  startTurn(session.clientId, session.id, turnId, {
+    autoScreenshot: session.autoScreenshot,
+  }).catch((err) => console.error(`[DataStore] Failed to start turn:`, err));
+
+  saveAudioInput(session.clientId, session.id, turnId, audioBuffer)
+    .then((file) =>
+      updateTurn(session.clientId, session.id, turnId, { userAudioFile: file })
+    )
+    .catch((err) => console.error(`[DataStore] Failed to save audio input:`, err));
 
   // If auto-screenshot, create pending entry BEFORE STT so the client's
   // screenshot_response (sent immediately after audio) can be buffered.
@@ -118,6 +154,7 @@ export async function handleAudioReceived(
   try {
     // Step 1: STT
     console.log(`[${session.id}] 📝 Step 1/4: Transcribing audio (${audioBuffer.length} bytes)...`);
+    saveTiming(session.clientId, session.id, turnId, { sttStartedAt: Date.now() });
     const startSTT = Date.now();
     const transcript = await transcribeAudio(audioBuffer, session.languageCode, signal);
     const sttTime = Date.now() - startSTT;
@@ -136,6 +173,12 @@ export async function handleAudioReceived(
       return;
     }
 
+    // Save transcript + STT timing to disk
+    saveTiming(session.clientId, session.id, turnId, {
+      userTranscript: transcript,
+      sttCompletedAt: Date.now(),
+    });
+
     // Send transcript back to client
     console.log(`[${session.id}] 📤 Sending transcript to client`);
     sendJSON(ws, { type: "transcript", text: transcript });
@@ -151,6 +194,19 @@ export async function handleAudioReceived(
           clearTimeout(pending.timer);
           const msg = pending.bufferedScreenshot;
           pendingScreenshots.delete(session.id);
+
+          // Save buffered screenshot + UI tree to disk
+          saveTiming(session.clientId, session.id, turnId, {
+            screenshotReceivedAt: Date.now(),
+          });
+          saveScreenshot(session.clientId, session.id, turnId, msg.screenshot)
+            .then((file) => updateTurn(session.clientId, session.id, turnId, { screenshotFile: file }))
+            .catch((err) => console.error(`[DataStore] Failed to save screenshot:`, err));
+          saveUiTree(session.clientId, session.id, turnId, msg.uiTree)
+            .then((file) => updateTurn(session.clientId, session.id, turnId, { uiTreeFile: file }))
+            .catch((err) => console.error(`[DataStore] Failed to save UI tree:`, err));
+
+          saveTiming(session.clientId, session.id, turnId, { analysisStartedAt: Date.now() });
           const result = await visualAnalysis(
             transcript,
             msg.screenshot,
@@ -159,6 +215,7 @@ export async function handleAudioReceived(
             signal,
             session.autoScreenshot
           );
+          saveTiming(session.clientId, session.id, turnId, { analysisCompletedAt: Date.now() });
           await sendAnswer(ws, session, result, signal, transcript);
         }
         // else: screenshot not yet arrived, handleScreenshotResponse will pick it up
@@ -170,11 +227,18 @@ export async function handleAudioReceived(
     // NOTE: User message is NOT added to history yet to avoid duplication
     // (triage and analysis functions append the user message themselves)
     console.log(`[${session.id}] 🤔 Step 2/4: Running triage query...`);
+    saveTiming(session.clientId, session.id, turnId, { triageStartedAt: Date.now() });
     const startTriage = Date.now();
     const triage = await triageQuery(transcript, getHistoryForLLM(session), signal, session.autoScreenshot);
     const triageTime = Date.now() - startTriage;
     console.log(`[${session.id}] ✅ Triage complete (${triageTime}ms)`);
     console.log(`[${session.id}] 🔍 Triage result: needsScreenshot=${triage.needsScreenshot}, reason="${triage.reason}"`);
+
+    // Save triage result + timing to disk
+    saveTiming(session.clientId, session.id, turnId, {
+      triageResult: { needsScreenshot: triage.needsScreenshot, reason: triage.reason },
+      triageCompletedAt: Date.now(),
+    });
 
     if (triage.needsScreenshot) {
       // Store pending request with TTL and ask client for screenshot (no audio)
@@ -193,6 +257,7 @@ export async function handleAudioReceived(
       });
 
       console.log(`[${session.id}] 📸 Requesting screenshot from client (no audio)`);
+      saveTiming(session.clientId, session.id, turnId, { screenshotRequestedAt: Date.now() });
       sendJSON(ws, {
         type: "screenshot_request",
         text: "",
@@ -209,6 +274,7 @@ export async function handleAudioReceived(
       screen: { packageName: "unknown", timestamp: Date.now() },
       nodes: [],
     };
+    saveTiming(session.clientId, session.id, turnId, { analysisStartedAt: Date.now() });
     const startAnalysis = Date.now();
     const result = await textAnalysis(
       transcript,
@@ -221,6 +287,7 @@ export async function handleAudioReceived(
     console.log(`[${session.id}] ✅ Analysis complete (${analysisTime}ms)`);
     console.log(`[${session.id}] 📝 Answer: "${result.answer}"`);
     console.log(`[${session.id}] 🎯 Highlights: ${result.highlights.length} items`);
+    saveTiming(session.clientId, session.id, turnId, { analysisCompletedAt: Date.now() });
 
     await sendAnswer(ws, session, result, signal, transcript);
   } catch (err) {
@@ -262,8 +329,19 @@ export async function handleScreenshotResponse(
   }
   const signal = controller.signal;
 
+  // Save screenshot and UI tree to disk
+  const turnId = session.currentTurnId;
+  saveTiming(session.clientId, session.id, turnId, { screenshotReceivedAt: Date.now() });
+  saveScreenshot(session.clientId, session.id, turnId, message.screenshot)
+    .then((file) => updateTurn(session.clientId, session.id, turnId, { screenshotFile: file }))
+    .catch((err) => console.error(`[DataStore] Failed to save screenshot:`, err));
+  saveUiTree(session.clientId, session.id, turnId, message.uiTree)
+    .then((file) => updateTurn(session.clientId, session.id, turnId, { uiTreeFile: file }))
+    .catch((err) => console.error(`[DataStore] Failed to save UI tree:`, err));
+
   try {
     console.log(`[${session.id}] Running visual analysis with screenshot...`);
+    saveTiming(session.clientId, session.id, turnId, { analysisStartedAt: Date.now() });
     const result = await visualAnalysis(
       pending.userText,
       message.screenshot,
@@ -272,6 +350,7 @@ export async function handleScreenshotResponse(
       signal,
       session.autoScreenshot
     );
+    saveTiming(session.clientId, session.id, turnId, { analysisCompletedAt: Date.now() });
 
     await sendAnswer(ws, session, result, signal, pending.userText);
   } catch (err) {
@@ -302,12 +381,15 @@ export async function handleScreenshotDeclined(
   }
   const signal = controller.signal;
 
+  const turnId = session.currentTurnId;
+
   try {
     console.log(`[${session.id}] Screenshot declined, falling back to text analysis...`);
     const emptyUiTree: UiTree = {
       screen: { packageName: "unknown", timestamp: Date.now() },
       nodes: [],
     };
+    saveTiming(session.clientId, session.id, turnId, { analysisStartedAt: Date.now() });
     const result = await textAnalysis(
       pending.userText,
       emptyUiTree,
@@ -315,6 +397,7 @@ export async function handleScreenshotDeclined(
       signal,
       session.autoScreenshot
     );
+    saveTiming(session.clientId, session.id, turnId, { analysisCompletedAt: Date.now() });
 
     await sendAnswer(ws, session, result, signal, pending.userText);
   } catch (err) {
@@ -345,6 +428,13 @@ async function sendAnswer(
   addToHistory(session, "assistant", cleanAnswer);
   console.log(`[${session.id}] 📚 Added assistant response to history`);
 
+  // Save assistant response to disk
+  const turnId = session.currentTurnId;
+  saveTiming(session.clientId, session.id, turnId, {
+    assistantText: cleanAnswer,
+    highlights: result.highlights,
+  });
+
   // Check if aborted before TTS
   if (signal?.aborted) {
     console.log(`[${session.id}] 🚫 Aborted before TTS`);
@@ -353,12 +443,19 @@ async function sendAnswer(
 
   // Step 4: TTS (send original text with audio tags for expressive delivery)
   console.log(`[${session.id}] 🔊 Step 4/4: Generating TTS for "${result.answer.substring(0, 50)}..."`);
+  saveTiming(session.clientId, session.id, turnId, { ttsStartedAt: Date.now() });
   let mp3Buffer: Buffer;
   const startTTS = Date.now();
   try {
     mp3Buffer = await textToSpeech(result.answer, session.languageCode, signal);
     const ttsTime = Date.now() - startTTS;
     console.log(`[${session.id}] ✅ TTS generated (${mp3Buffer.length} bytes, ${ttsTime}ms)`);
+    saveTiming(session.clientId, session.id, turnId, { ttsCompletedAt: Date.now() });
+
+    // Save TTS audio to disk
+    saveAudioOutput(session.clientId, session.id, turnId, mp3Buffer)
+      .then((file) => updateTurn(session.clientId, session.id, turnId, { assistantAudioFile: file }))
+      .catch((err) => console.error(`[DataStore] Failed to save TTS audio:`, err));
   } catch (err) {
     if ((err as Error).name === "AbortError") {
       console.log(`[${session.id}] 🚫 TTS aborted`);
@@ -366,6 +463,7 @@ async function sendAnswer(
     }
     console.error(`[${session.id}] ❌ TTS failed, sending text-only answer:`);
     console.error(err);
+    saveTiming(session.clientId, session.id, turnId, { ttsCompletedAt: Date.now() });
     // Send answer without audio if TTS fails
     const answerMsg: AnswerMessage = {
       type: "answer",
@@ -374,6 +472,7 @@ async function sendAnswer(
       hasAudio: false,
     };
     sendJSON(ws, answerMsg);
+    saveTiming(session.clientId, session.id, turnId, { completedAt: Date.now() });
     console.log(`[${session.id}] 📤 Sent text-only answer (no audio)`);
     return;
   }
@@ -388,6 +487,7 @@ async function sendAnswer(
   console.log(`[${session.id}] 📤 Sending answer message + MP3 binary`);
   sendJSON(ws, answerMsg);
   sendBinary(ws, mp3Buffer);
+  saveTiming(session.clientId, session.id, turnId, { completedAt: Date.now() });
   console.log(`[${session.id}] ✅ Complete! Answer sent to client\n`);
 }
 

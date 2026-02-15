@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Conversations</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config={theme:{extend:{fontFamily:{mono:['SF Mono','Menlo','Monaco','Consolas','monospace']}}}}</script>
+  <style>
+    * { -webkit-font-smoothing: antialiased; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .pulse { animation: pulse 2s ease-in-out infinite; }
+    pre::-webkit-scrollbar, .scroll-thin::-webkit-scrollbar { height: 4px; width: 4px; }
+    pre::-webkit-scrollbar-thumb, .scroll-thin::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
+    .turn-card .turn-body { transition: opacity 0.15s ease; }
+    .turn-card.turn-card--collapsed .turn-body { display: none; }
+    .turn-card .turn-chevron { transition: transform 0.2s ease; }
+    .turn-card.turn-card--collapsed .turn-chevron { transform: rotate(-90deg); }
+    /* Audio player */
+    audio { height: 28px; width: 100%; }
+    audio::-webkit-media-controls-panel { background: #fafafa; border-radius: 4px; }
+    audio::-webkit-media-controls-play-button { color: #525252; }
+    audio::-webkit-media-controls-current-time-display,
+    audio::-webkit-media-controls-time-remaining-display { font-size: 10px; font-family: monospace; color: #737373; }
+  </style>
+</head>
+<body class="h-full bg-neutral-50 overflow-hidden font-mono text-xs text-neutral-700">
+  <div class="flex h-full">
+
+    <!-- Sidebar -->
+    <div class="w-64 flex-shrink-0 bg-white border-r border-neutral-200 flex flex-col h-full">
+      <div class="px-3 h-10 border-b border-neutral-200 flex items-center justify-between flex-shrink-0">
+        <span class="text-[11px] font-medium text-neutral-900 tracking-tight">conversations</span>
+        <div class="flex items-center gap-1.5" id="liveIndicator">
+          <span class="w-1.5 h-1.5 rounded-full bg-neutral-900 pulse"></span>
+          <span class="text-[9px] text-neutral-400 uppercase tracking-widest">live</span>
+        </div>
+      </div>
+
+      <div class="px-3 py-2 border-b border-neutral-200">
+        <select id="clientSelect"
+          class="w-full bg-neutral-50 border border-neutral-200 rounded text-[11px] py-1 px-1.5 text-neutral-700 focus:outline-none focus:border-neutral-400">
+          <option value="">client...</option>
+        </select>
+      </div>
+
+      <div class="flex-1 overflow-y-auto scroll-thin" id="conversationListContainer">
+        <div id="conversationList" class="p-1.5 space-y-px"></div>
+      </div>
+    </div>
+
+    <!-- Main content -->
+    <div class="flex-1 flex flex-col overflow-hidden min-w-0">
+      <div id="contentHeader" class="hidden px-4 h-10 border-b border-neutral-200 bg-white flex-shrink-0 flex items-center"></div>
+      <div id="mainContent" class="flex-1 overflow-y-auto scroll-thin">
+        <div id="placeholder" class="flex items-center justify-center h-full">
+          <span class="text-neutral-300 text-[11px]">select a conversation</span>
+        </div>
+        <div id="turnsContainer" class="hidden px-4 py-3 space-y-3 max-w-6xl mx-auto pb-16"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Screenshot modal -->
+  <div id="screenshotModal"
+    class="hidden fixed inset-0 bg-black/90 z-50 flex items-center justify-center cursor-pointer"
+    onclick="this.classList.add('hidden')">
+    <img id="modalImage" class="max-w-[90vw] max-h-[90vh] object-contain" />
+  </div>
+
+<script>
+// --- State ---
+let currentClientId = null;
+let currentConvId = null;
+let lastConvListJson = '';
+let lastConvUpdatedAt = 0;
+let polling = null;
+const collapsedTurns = new Set(); // keys: 'clientId:convId:turnId'
+
+function turnCollapseKey(clientId, convId, turnId) {
+  return `${clientId || currentClientId}:${convId || currentConvId}:${turnId}`;
+}
+function isTurnCollapsed(turnId) {
+  return collapsedTurns.has(turnCollapseKey(null, null, turnId));
+}
+function toggleTurnCollapsed(turnId) {
+  const key = turnCollapseKey(null, null, turnId);
+  if (collapsedTurns.has(key)) collapsedTurns.delete(key);
+  else collapsedTurns.add(key);
+}
+
+// --- Formatting ---
+function fmtTime(ms) {
+  if (!ms) return '--';
+  const d = new Date(ms);
+  return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})
+    + '.' + String(d.getMilliseconds()).padStart(3,'0');
+}
+function fmtDate(ms) {
+  const d = new Date(ms);
+  return d.toLocaleDateString('en-CA') + ' ' + fmtTime(ms);
+}
+function fmtDur(ms) {
+  if (ms == null) return '--';
+  return ms < 1000 ? Math.round(ms) + 'ms' : (ms/1000).toFixed(2) + 's';
+}
+
+// --- URL state ---
+function readHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  return { client: p.get('client'), conv: p.get('conv') };
+}
+function writeHash(client, conv) {
+  const p = new URLSearchParams();
+  if (client) p.set('client', client);
+  if (conv) p.set('conv', conv);
+  const h = p.toString();
+  if (location.hash.slice(1) !== h) history.replaceState(null, '', '#' + h);
+}
+
+// --- Init ---
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadClients();
+  const { client, conv } = readHash();
+  if (client) {
+    document.getElementById('clientSelect').value = client;
+    currentClientId = client;
+    await loadConversations(client);
+    if (conv) await loadConversation(client, conv);
+  }
+  document.getElementById('clientSelect').addEventListener('change', e => {
+    if (e.target.value) {
+      currentClientId = e.target.value;
+      currentConvId = null;
+      lastConvListJson = '';
+      lastConvUpdatedAt = 0;
+      writeHash(currentClientId, null);
+      loadConversations(currentClientId);
+      clearMain();
+    } else {
+      currentClientId = null;
+      currentConvId = null;
+      writeHash(null, null);
+      clearAll();
+    }
+  });
+  polling = setInterval(poll, 1000);
+});
+
+// --- Polling ---
+async function poll() {
+  try {
+    await loadClients();
+    if (!currentClientId) return;
+    const res = await fetch(`/api/clients/${currentClientId}/conversations`);
+    const convs = await res.json();
+    const json = JSON.stringify(convs);
+    if (json !== lastConvListJson) {
+      lastConvListJson = json;
+      renderConversationList(convs);
+    }
+    if (!currentConvId) return;
+    const cRes = await fetch(`/api/clients/${currentClientId}/conversations/${currentConvId}`);
+    const conv = await cRes.json();
+    if (conv.updatedAt !== lastConvUpdatedAt) {
+      lastConvUpdatedAt = conv.updatedAt;
+      smartUpdateConversation(conv);
+    }
+  } catch (e) { /* silent */ }
+}
+
+// --- Clients ---
+async function loadClients() {
+  try {
+    const res = await fetch('/api/clients');
+    const clients = await res.json();
+    const sel = document.getElementById('clientSelect');
+    const prev = sel.value;
+    const opts = Array.from(sel.options).map(o => o.value);
+    const newOpts = ['', ...clients];
+    if (JSON.stringify(opts) === JSON.stringify(newOpts)) return;
+    sel.innerHTML = '<option value="">client...</option>';
+    clients.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c;
+      o.textContent = c.length > 24 ? c.slice(0,10)+'..'+c.slice(-10) : c;
+      o.title = c;
+      sel.appendChild(o);
+    });
+    if (prev && clients.includes(prev)) sel.value = prev;
+  } catch(e) {}
+}
+
+// --- Conversation list ---
+async function loadConversations(clientId) {
+  currentClientId = clientId;
+  try {
+    const res = await fetch(`/api/clients/${clientId}/conversations`);
+    const convs = await res.json();
+    lastConvListJson = JSON.stringify(convs);
+    renderConversationList(convs);
+  } catch(e) {}
+}
+
+function renderConversationList(convs) {
+  const list = document.getElementById('conversationList');
+  if (!convs.length) {
+    list.innerHTML = '<p class="text-[10px] text-neutral-400 text-center py-6">no conversations</p>';
+    return;
+  }
+  const existingIds = new Set();
+  convs.forEach(c => {
+    existingIds.add(c.id);
+    let card = list.querySelector(`[data-id="${c.id}"]`);
+    const active = c.id === currentConvId;
+    const hash = JSON.stringify(c) + active;
+    if (card && card.dataset.hash === hash) return;
+    const html = buildConvCard(c, active);
+    if (card) {
+      card.outerHTML = html;
+    } else {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      list.appendChild(tmp.firstElementChild);
+    }
+  });
+  list.querySelectorAll('[data-id]').forEach(el => {
+    if (!existingIds.has(el.dataset.id)) el.remove();
+  });
+}
+
+function buildConvCard(c, active) {
+  const time = fmtDate(c.createdAt);
+  const preview = c.firstUserMessage
+    ? esc(c.firstUserMessage.length > 40 ? c.firstUserMessage.slice(0,40)+'\u2026' : c.firstUserMessage)
+    : '';
+  const cls = active
+    ? 'bg-neutral-100 border-l-neutral-900'
+    : 'hover:bg-neutral-50 border-l-transparent';
+  const hash = JSON.stringify(c) + active;
+  return `<div data-id="${c.id}" data-hash='${esc(hash)}'
+    class="px-2.5 py-1.5 cursor-pointer border-l-2 ${cls} transition-colors"
+    onclick="selectConv('${c.id}')">
+    <div class="flex items-center justify-between gap-2">
+      <span class="text-[10px] text-neutral-500">${time}</span>
+      <span class="text-[9px] text-neutral-400">${c.turnCount}t &middot; ${c.language}</span>
+    </div>
+    ${preview ? `<p class="text-[11px] text-neutral-600 mt-0.5 truncate">${preview}</p>` : ''}
+  </div>`;
+}
+
+function selectConv(convId) {
+  currentConvId = convId;
+  lastConvUpdatedAt = 0;
+  writeHash(currentClientId, convId);
+  document.querySelectorAll('#conversationList [data-id]').forEach(el => {
+    const isActive = el.dataset.id === convId;
+    el.classList.toggle('bg-neutral-100', isActive);
+    el.classList.toggle('border-l-neutral-900', isActive);
+    el.classList.toggle('border-l-transparent', !isActive);
+  });
+  loadConversation(currentClientId, convId);
+}
+
+// --- Conversation detail ---
+async function loadConversation(clientId, convId) {
+  currentConvId = convId;
+  writeHash(clientId, convId);
+  try {
+    const res = await fetch(`/api/clients/${clientId}/conversations/${convId}`);
+    const conv = await res.json();
+    lastConvUpdatedAt = conv.updatedAt;
+    renderConversationFull(conv);
+  } catch(e) {}
+}
+
+function renderHeader(conv) {
+  return `<div class="flex items-center justify-between w-full">
+    <div class="flex items-center gap-3">
+      <span class="text-[11px] text-neutral-500">${fmtDate(conv.createdAt)}</span>
+      <span class="text-[10px] text-neutral-400">${conv.language} &middot; ${conv.turns.length} turn${conv.turns.length!==1?'s':''}</span>
+      <span class="text-[10px] text-neutral-300 font-mono">${conv.conversationId.slice(0,8)}</span>
+    </div>
+    <button onclick="deleteConversation('${conv.clientId}','${conv.conversationId}')"
+      class="text-neutral-400 hover:text-red-500 transition-colors" title="Delete">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+    </button>
+  </div>`;
+}
+
+function renderConversationFull(conv) {
+  const header = document.getElementById('contentHeader');
+  header.classList.remove('hidden');
+  header.innerHTML = renderHeader(conv);
+
+  document.getElementById('placeholder').classList.add('hidden');
+  const container = document.getElementById('turnsContainer');
+  container.classList.remove('hidden');
+  container.innerHTML = '';
+  if (!conv.turns.length) {
+    container.innerHTML = '<p class="text-center text-neutral-300 py-8 text-[11px]">no turns yet</p>';
+    return;
+  }
+  conv.turns.forEach(turn => {
+    const el = renderTurn(turn);
+    el.dataset.hash = JSON.stringify(turn);
+    container.appendChild(el);
+  });
+}
+
+function smartUpdateConversation(conv) {
+  const container = document.getElementById('turnsContainer');
+  if (!container || container.classList.contains('hidden')) {
+    renderConversationFull(conv);
+    return;
+  }
+  const header = document.getElementById('contentHeader');
+  if (header) header.innerHTML = renderHeader(conv);
+
+  conv.turns.forEach(turn => {
+    const hash = JSON.stringify(turn);
+    const existing = container.querySelector(`[data-turn-id="${turn.turnId}"]`);
+    if (existing) {
+      if (existing.dataset.hash !== hash) {
+        const el = renderTurn(turn);
+        el.dataset.hash = hash;
+        container.replaceChild(el, existing);
+      }
+    } else {
+      const el = renderTurn(turn);
+      el.dataset.hash = hash;
+      container.appendChild(el);
+      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  });
+}
+
+// --- Render turn ---
+function renderTurn(t) {
+  const el = document.createElement('div');
+  el.className = 'turn-card bg-white border border-neutral-200 rounded overflow-hidden';
+  el.dataset.turnId = t.turnId;
+
+  const base = `/api/data/${currentClientId}/${currentConvId}`;
+  const isInProgress = !t.completedAt && t.audioReceivedAt;
+
+  let h = '';
+
+  // --- Turn header (clickable to collapse/expand) ---
+  const collapsed = isTurnCollapsed(t.turnId);
+  h += `<div class="turn-header px-3 py-1.5 border-b border-neutral-100 flex items-center gap-2 cursor-pointer hover:bg-neutral-50 select-none" onclick="toggleTurnCollapsed(${t.turnId}); var c=this.closest('.turn-card'); c.classList.toggle('turn-card--collapsed'); this.setAttribute('aria-expanded', c.classList.contains('turn-card--collapsed') ? 'false' : 'true')" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); this.click(); }" role="button" tabindex="0" aria-expanded="${!collapsed}" title="Collapse/expand">
+    <span class="turn-chevron text-neutral-400 flex-shrink-0" aria-hidden="true">▼</span>
+    <div class="flex items-center gap-2 flex-1 min-w-0">
+      <span class="text-[11px] font-medium text-neutral-900">#${t.turnId}</span>
+      <span class="text-[10px] text-neutral-400">${fmtTime(t.timestamp)}</span>
+      ${t.autoScreenshot ? '<span class="text-[9px] text-neutral-400">auto-ss</span>' : ''}
+      ${isInProgress ? '<span class="text-[9px] text-neutral-500 flex items-center gap-1"><span class="w-1 h-1 rounded-full bg-neutral-400 pulse"></span>processing</span>' : ''}
+    </div>
+    ${t.triageResult ? `<span class="text-[9px] text-neutral-400 cursor-default flex-shrink-0" ${t.triageResult.reason ? `title="${esc(t.triageResult.reason)}"` : ''}>${t.triageResult.needsScreenshot ? 'visual' : 'text-only'}</span>` : ''}
+  </div>`;
+
+  h += `<div class="turn-body">`;
+  // --- Pipeline timing breakdown ---
+  h += renderTimingTable(t);
+
+  // --- User section ---
+  if (t.userTranscript || (t.audioReceivedAt && !t.sttCompletedAt)) {
+    h += `<div class="px-3 py-2 border-b border-neutral-100">
+      <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">user</div>`;
+    if (t.userTranscript) {
+      h += `<p class="text-[11px] text-neutral-800 leading-relaxed">${esc(t.userTranscript)}</p>`;
+    } else {
+      h += `<p class="text-[11px] text-neutral-400 italic">transcribing...</p>`;
+    }
+    if (t.userAudioFile) {
+      h += `<div class="mt-1.5 flex items-center gap-2">
+        <span class="text-[9px] text-neutral-400 flex-shrink-0">input</span>
+        <audio controls preload="none" src="${base}/${t.userAudioFile}"></audio>
+      </div>`;
+    }
+    h += `</div>`;
+  }
+
+  // --- Screenshot request (if triage requested one) ---
+  if (t.screenshotRequestedAt) {
+    const waitDur = t.screenshotReceivedAt ? t.screenshotReceivedAt - t.screenshotRequestedAt : null;
+    h += `<div class="px-3 py-1.5 border-b border-neutral-100 flex items-center gap-3">
+      <span class="text-[9px] text-neutral-400 uppercase tracking-wider">screenshot requested</span>
+      <span class="text-[10px] text-neutral-400">${fmtTime(t.screenshotRequestedAt)}</span>
+      ${waitDur !== null ? `<span class="text-[10px] text-neutral-400">client responded in ${fmtDur(waitDur)}</span>` : '<span class="text-[10px] text-neutral-400 italic">waiting...</span>'}
+    </div>`;
+  }
+
+  // --- Screenshot + UI Tree side by side ---
+  if (t.screenshotFile || t.uiTreeFile) {
+    const ssImgId = 'ssimg-'+t.turnId;
+    h += `<div class="border-b border-neutral-100 flex items-start" style="position:relative">`;
+    if (t.screenshotFile) {
+      h += `<div class="flex-shrink-0 p-3 border-r border-neutral-100" style="width:300px">
+        <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">screenshot${t.screenshotReceivedAt ? ' \u2014 '+fmtTime(t.screenshotReceivedAt) : ''}</div>
+        <img id="${ssImgId}" loading="lazy" src="${base}/${t.screenshotFile}"
+          class="rounded border border-neutral-200 w-full cursor-pointer hover:opacity-90 transition-opacity"
+          onclick="showModal('${base}/${t.screenshotFile}')" />
+      </div>`;
+    }
+    if (t.uiTreeFile) {
+      const treeId = 'tree-'+t.turnId;
+      h += `<div class="flex-1 min-w-0 p-3 flex flex-col" id="treewrap-${t.turnId}">
+        <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">ui tree</div>
+        <pre id="${treeId}" class="text-[9px] bg-neutral-50 p-2 rounded overflow-auto font-mono text-neutral-500 leading-relaxed flex-1 min-h-0" style="min-height:80px">loading...</pre>
+      </div>`;
+    }
+    h += `</div>`;
+  }
+
+  // --- Assistant response ---
+  if (t.assistantText || (t.analysisStartedAt && !t.analysisCompletedAt)) {
+    h += `<div class="px-3 py-2">
+      <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">assistant</div>`;
+    if (t.assistantText) {
+      h += `<p class="text-[11px] text-neutral-800 leading-relaxed">${esc(t.assistantText)}</p>`;
+      if (t.highlights && t.highlights.length) {
+        h += `<div class="mt-2">
+          <span class="text-[9px] text-neutral-400 uppercase tracking-wider">highlighted elements</span>
+          <div class="mt-1 flex flex-wrap gap-1.5">`;
+        t.highlights.forEach(hl => {
+          const bounds = hl.bounds ? ` [${hl.bounds.left},${hl.bounds.top} ${hl.bounds.right},${hl.bounds.bottom}]` : '';
+          h += `<span class="text-[10px] px-2 py-0.5 rounded bg-neutral-100 text-neutral-600 border border-neutral-200">
+            <span class="text-neutral-800">${esc(hl.label)}</span>
+            ${hl.elementId ? `<span class="text-neutral-400 ml-1">${esc(hl.elementId)}</span>` : ''}
+            ${bounds ? `<span class="text-neutral-300 ml-1">${bounds}</span>` : ''}
+          </span>`;
+        });
+        h += `</div></div>`;
+      }
+      if (t.assistantAudioFile) {
+        h += `<div class="mt-2 flex items-center gap-2">
+          <span class="text-[9px] text-neutral-400 flex-shrink-0">output</span>
+          <audio controls preload="none" src="${base}/${t.assistantAudioFile}"></audio>
+        </div>`;
+      }
+    } else {
+      h += `<p class="text-[11px] text-neutral-400 italic flex items-center gap-1"><span class="w-1 h-1 rounded-full bg-neutral-400 pulse inline-block"></span>analyzing...</p>`;
+    }
+    h += `</div>`;
+  }
+
+  h += `</div>`;
+  el.innerHTML = h;
+  if (collapsed) el.classList.add('turn-card--collapsed');
+
+  // Auto-load UI tree
+  if (t.uiTreeFile) {
+    const treeId = 'tree-'+t.turnId;
+    setTimeout(() => loadTree(treeId, `${base}/${t.uiTreeFile}`), 0);
+  }
+
+  // Cap UI tree column height to screenshot height; tree content scrolls inside
+  if (t.screenshotFile && t.uiTreeFile) {
+    const ssImgId = 'ssimg-'+t.turnId;
+    const treeId = 'tree-'+t.turnId;
+    setTimeout(() => {
+      const img = document.getElementById(ssImgId);
+      const pre = document.getElementById(treeId);
+      const wrap = document.getElementById('treewrap-'+t.turnId);
+      if (!img || !pre || !wrap) return;
+      function syncHeight() {
+        const screenshotHeight = img.parentElement.offsetHeight;
+        if (screenshotHeight > 60) wrap.style.maxHeight = screenshotHeight + 'px';
+      }
+      if (img.complete) syncHeight();
+      else img.addEventListener('load', syncHeight);
+    }, 0);
+  }
+
+  return el;
+}
+
+// --- Timing (single row) ---
+function renderTimingTable(t) {
+  const stages = [];
+  if (t.sttStartedAt)       stages.push({ label: 'stt',     start: t.sttStartedAt,       end: t.sttCompletedAt });
+  if (t.triageStartedAt)    stages.push({ label: 'triage',  start: t.triageStartedAt,    end: t.triageCompletedAt });
+  if (t.screenshotRequestedAt && t.screenshotReceivedAt) {
+    stages.push({ label: 'ss wait', start: t.screenshotRequestedAt, end: t.screenshotReceivedAt });
+  }
+  if (t.analysisStartedAt)  stages.push({ label: 'llm',     start: t.analysisStartedAt,  end: t.analysisCompletedAt });
+  if (t.ttsStartedAt)       stages.push({ label: 'tts',     start: t.ttsStartedAt,       end: t.ttsCompletedAt });
+  if (!stages.length) return '';
+
+  const totalStart = t.audioReceivedAt;
+  const totalEnd = t.completedAt;
+  const totalDur = totalEnd && totalStart ? totalEnd - totalStart : null;
+
+  const parts = stages.map(s => {
+    const dur = (s.end || Date.now()) - s.start;
+    const done = !!s.end;
+    return `<span class="text-neutral-500">${s.label}</span> <span class="text-neutral-700 font-medium">${fmtDur(dur)}</span>${done ? '' : '<span class="pulse">\u2026</span>'}`;
+  });
+
+  let h = `<div class="px-3 py-1.5 border-b border-neutral-100 flex items-center gap-1 text-[10px] flex-wrap">`;
+  h += parts.join('<span class="text-neutral-300">\u2192</span>');
+  if (totalDur !== null) {
+    h += `<span class="text-neutral-300 ml-auto">=</span> <span class="text-neutral-700 font-medium">${fmtDur(totalDur)}</span>`;
+  }
+  h += `</div>`;
+  return h;
+}
+
+// --- Helpers ---
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+function showModal(src) {
+  document.getElementById('modalImage').src = src;
+  document.getElementById('screenshotModal').classList.remove('hidden');
+}
+
+async function loadTree(id, src) {
+  const pre = document.getElementById(id);
+  if (!pre || pre.dataset.loaded) return;
+  try {
+    const r = await fetch(src);
+    pre.textContent = JSON.stringify(await r.json(), null, 2);
+    pre.dataset.loaded = 'true';
+  } catch { pre.textContent = 'failed to load'; }
+}
+
+async function deleteConversation(clientId, convId) {
+  if (!confirm('Delete this conversation?')) return;
+  try {
+    await fetch(`/api/clients/${clientId}/conversations/${convId}`, { method: 'DELETE' });
+    currentConvId = null;
+    lastConvUpdatedAt = 0;
+    writeHash(currentClientId, null);
+    clearMain();
+    await loadConversations(currentClientId);
+  } catch(e) {}
+}
+
+function clearMain() {
+  document.getElementById('contentHeader').classList.add('hidden');
+  document.getElementById('turnsContainer').classList.add('hidden');
+  document.getElementById('turnsContainer').innerHTML = '';
+  document.getElementById('placeholder').classList.remove('hidden');
+  lastConvUpdatedAt = 0;
+}
+
+function clearAll() {
+  currentClientId = null;
+  currentConvId = null;
+  lastConvListJson = '';
+  lastConvUpdatedAt = 0;
+  document.getElementById('conversationList').innerHTML = '';
+  clearMain();
+}
+</script>
+</body>
+</html>

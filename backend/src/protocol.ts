@@ -22,6 +22,7 @@ export interface AudioDataMessage {
 export interface HelloMessage {
   type: "hello";
   sessionId: string;
+  clientId?: string;
 }
 
 export interface ResetSessionMessage {

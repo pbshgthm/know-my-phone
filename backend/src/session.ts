@@ -6,21 +6,27 @@ export interface ConversationEntry {
 
 export interface Session {
   id: string;
+  clientId: string;
   conversationHistory: ConversationEntry[];
   createdAt: number;
   languageCode: string;
   autoScreenshot: boolean;
+  turnCounter: number;
+  currentTurnId: number;
 }
 
 const sessions = new Map<string, Session>();
 
-export function createSession(id: string): Session {
+export function createSession(id: string, clientId: string = "unknown"): Session {
   const session: Session = {
     id,
+    clientId,
     conversationHistory: [],
     createdAt: Date.now(),
     languageCode: "en",
     autoScreenshot: false,
+    turnCounter: 0,
+    currentTurnId: 0,
   };
   sessions.set(id, session);
   return session;
@@ -30,10 +36,13 @@ export function getSession(id: string): Session | undefined {
   return sessions.get(id);
 }
 
-export function getOrCreateSession(id: string): Session {
+export function getOrCreateSession(id: string, clientId?: string): Session {
   const existing = sessions.get(id);
-  if (existing) return existing;
-  return createSession(id);
+  if (existing) {
+    if (clientId) existing.clientId = clientId;
+    return existing;
+  }
+  return createSession(id, clientId);
 }
 
 export function resetSession(id: string, languageCode?: string): Session {

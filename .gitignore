@@ -12,5 +12,8 @@ android/*.iml
 android/app/*.iml
 android/.idea/
 
+# Data (conversation recordings)
+data/
+
 # OS
 .DS_Store

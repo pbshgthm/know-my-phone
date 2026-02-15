@@ -15,6 +15,7 @@ import {
   cancelSession,
   cleanupSession,
 } from "./stateMachine.js";
+import { initConversation } from "./dataStore.js";
 
 interface ClientState {
   session: Session;
@@ -109,6 +110,7 @@ function handleMessage(
         ws.send(JSON.stringify({ type: "error", message: "Missing sessionId" }));
         return;
       }
+      const clientId = typeof parsed.clientId === "string" ? parsed.clientId : "unknown";
       // Bind to the client-provided sessionId
       if (state.sessionId !== sessionId) {
         // Clean up temporary session
@@ -117,9 +119,13 @@ function handleMessage(
           deleteSession(state.session.id);
         }
         state.sessionId = sessionId;
-        state.session = getOrCreateSession(sessionId);
-        console.log(`[WS] 🔑 Bound to sessionId=${sessionId}`);
+        state.session = getOrCreateSession(sessionId, clientId);
+        console.log(`[WS] 🔑 Bound to clientId=${clientId}, sessionId=${sessionId}`);
       }
+      // Initialize conversation data on disk
+      initConversation(clientId, sessionId, state.session.languageCode).catch((err) => {
+        console.error(`[WS] ❌ Failed to init conversation on disk:`, err);
+      });
       break;
     }
 

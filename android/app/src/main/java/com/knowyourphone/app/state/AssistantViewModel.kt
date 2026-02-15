@@ -49,11 +49,18 @@ class AssistantViewModel(
     private val _autoScreenshot = MutableStateFlow(false)
     val autoScreenshot: StateFlow<Boolean> = _autoScreenshot
 
+    private val _inputLevel = MutableStateFlow(0f)
+    val inputLevel: StateFlow<Float> = _inputLevel
+
+    private val _playbackLevel = MutableStateFlow(0f)
+    val playbackLevel: StateFlow<Float> = _playbackLevel
+
     private val audioRecorder = AudioRecorder()
     private val audioPlayer = AudioPlayer(context)
 
     private var sessionId: String = UUID.randomUUID().toString()
     private var languageCode: String = getPreferredLanguageCode()
+    private val clientId: String = getOrCreateClientId()
 
     init {
         _autoScreenshot.value = context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
@@ -68,6 +75,10 @@ class AssistantViewModel(
     private var pendingHighlights: List<HighlightTarget> = emptyList()
     @Volatile
     private var pendingScreenshotRequest = false
+    @Volatile
+    private var smoothedInputLevel = 0f
+    @Volatile
+    private var smoothedPlaybackLevel = 0f
 
     private val wsClient: WsClient = WsClient(
         onMessage = { text -> handleServerMessage(text) },
@@ -106,7 +117,7 @@ class AssistantViewModel(
     private var highlightDismissJob: Job? = null
 
     private fun sendHello() {
-        wsClient.sendText(MessageParser.toJson(HelloMessage(sessionId = sessionId)))
+        wsClient.sendText(MessageParser.toJson(HelloMessage(sessionId = sessionId, clientId = clientId)))
     }
 
     private fun sendLanguage() {
@@ -120,6 +131,10 @@ class AssistantViewModel(
     fun disconnect() {
         wsClient.disconnect()
         _connected.value = false
+        _inputLevel.value = 0f
+        smoothedInputLevel = 0f
+        _playbackLevel.value = 0f
+        smoothedPlaybackLevel = 0f
     }
 
     /**
@@ -141,6 +156,8 @@ class AssistantViewModel(
                 audioPlayer.stop()
                 sendCancel()
                 expectingMp3Binary = false
+                _playbackLevel.value = 0f
+                smoothedPlaybackLevel = 0f
                 startListening()
             }
             AssistantState.NEED_SCREENSHOT -> {
@@ -165,6 +182,10 @@ class AssistantViewModel(
     fun cancelRecordingIfListening() {
         if (_state.value != AssistantState.LISTENING) return
         audioRecorder.cancelRecording()
+        _inputLevel.value = 0f
+        smoothedInputLevel = 0f
+        _playbackLevel.value = 0f
+        smoothedPlaybackLevel = 0f
         _state.value = AssistantState.IDLE
     }
 
@@ -178,11 +199,19 @@ class AssistantViewModel(
             }
             AssistantState.LISTENING -> {
                 audioRecorder.cancelRecording()
+                _inputLevel.value = 0f
+                smoothedInputLevel = 0f
+                _playbackLevel.value = 0f
+                smoothedPlaybackLevel = 0f
                 _state.value = AssistantState.IDLE
             }
             AssistantState.THINKING -> {
                 sendCancel()
                 expectingMp3Binary = false
+                _inputLevel.value = 0f
+                smoothedInputLevel = 0f
+                _playbackLevel.value = 0f
+                smoothedPlaybackLevel = 0f
                 _state.value = AssistantState.IDLE
             }
             AssistantState.NEED_SCREENSHOT -> {
@@ -193,6 +222,10 @@ class AssistantViewModel(
                 _highlights.value = emptyList()
                 highlightDismissJob?.cancel()
                 pendingHighlights = emptyList()
+                _inputLevel.value = 0f
+                smoothedInputLevel = 0f
+                _playbackLevel.value = 0f
+                smoothedPlaybackLevel = 0f
                 _state.value = AssistantState.IDLE
             }
         }
@@ -209,10 +242,22 @@ class AssistantViewModel(
         }
         _highlights.value = emptyList()
         highlightDismissJob?.cancel()
-        val started = audioRecorder.startRecording(scope)
+        _inputLevel.value = 0f
+        smoothedInputLevel = 0f
+        _playbackLevel.value = 0f
+        smoothedPlaybackLevel = 0f
+        val started = audioRecorder.startRecording(scope) { level ->
+            val smoothed = smoothedInputLevel * 0.45f + level * 0.55f
+            smoothedInputLevel = smoothed
+            _inputLevel.value = smoothed
+        }
         if (!started) {
             Log.e(TAG, "Failed to start recording (mic unavailable)")
             _errorMessage.value = "Mic unavailable"
+            _inputLevel.value = 0f
+            smoothedInputLevel = 0f
+            _playbackLevel.value = 0f
+            smoothedPlaybackLevel = 0f
             _state.value = AssistantState.IDLE
             return
         }
@@ -221,6 +266,10 @@ class AssistantViewModel(
 
     private fun stopListeningAndSend() {
         val pcmData = audioRecorder.stopRecording()
+        _inputLevel.value = 0f
+        smoothedInputLevel = 0f
+        _playbackLevel.value = 0f
+        smoothedPlaybackLevel = 0f
         _state.value = AssistantState.THINKING
 
         if (pcmData.isEmpty()) {
@@ -250,6 +299,10 @@ class AssistantViewModel(
                 Log.e(TAG, "Failed to send audio frames")
                 withContext(Dispatchers.Main) {
                     _errorMessage.value = "Send failed"
+                    _inputLevel.value = 0f
+                    smoothedInputLevel = 0f
+                    _playbackLevel.value = 0f
+                    smoothedPlaybackLevel = 0f
                     _state.value = AssistantState.IDLE
                 }
             } else {
@@ -286,6 +339,10 @@ class AssistantViewModel(
                         _highlights.value = pendingHighlights
                         scheduleHighlightDismiss()
                     }
+                    _inputLevel.value = 0f
+                    smoothedInputLevel = 0f
+                    _playbackLevel.value = 0f
+                    smoothedPlaybackLevel = 0f
                     _state.value = AssistantState.IDLE
                 }
             }
@@ -328,6 +385,10 @@ class AssistantViewModel(
                 is ServerMessage.Error -> {
                     Log.e(TAG, "Server error: ${message.message}")
                     _errorMessage.value = message.message
+                    _inputLevel.value = 0f
+                    smoothedInputLevel = 0f
+                    _playbackLevel.value = 0f
+                    smoothedPlaybackLevel = 0f
                     _state.value = AssistantState.IDLE
                 }
 
@@ -345,12 +406,25 @@ class AssistantViewModel(
             expectingMp3Binary = false
             scope.launch(Dispatchers.Main) {
                 Log.d(TAG, "Setting state to SPEAKING and playing audio")
+                _inputLevel.value = 0f
+                smoothedInputLevel = 0f
+                _playbackLevel.value = 0f
+                smoothedPlaybackLevel = 0f
                 _state.value = AssistantState.SPEAKING
-                audioPlayer.playMp3Bytes(data) {
+                audioPlayer.playMp3Bytes(
+                    mp3Data = data,
+                    onLevelChanged = { level ->
+                        val smoothed = smoothedPlaybackLevel * 0.35f + level * 0.65f
+                        smoothedPlaybackLevel = smoothed
+                        _playbackLevel.value = smoothed
+                    }
+                ) {
                     // Playback complete
                     scope.launch(Dispatchers.Main) {
                         if (pendingScreenshotRequest) {
                             pendingScreenshotRequest = false
+                            _playbackLevel.value = 0f
+                            smoothedPlaybackLevel = 0f
                             _state.value = AssistantState.NEED_SCREENSHOT
                         } else {
                             // Show highlights independently, pill goes to IDLE
@@ -358,6 +432,10 @@ class AssistantViewModel(
                                 _highlights.value = pendingHighlights
                                 scheduleHighlightDismiss()
                             }
+                            _inputLevel.value = 0f
+                            smoothedInputLevel = 0f
+                            _playbackLevel.value = 0f
+                            smoothedPlaybackLevel = 0f
                             _state.value = AssistantState.IDLE
                         }
                     }
@@ -465,6 +543,10 @@ class AssistantViewModel(
         expectingMp3Binary = false
         pendingScreenshotRequest = false
         pendingHighlights = emptyList()
+        _inputLevel.value = 0f
+        smoothedInputLevel = 0f
+        _playbackLevel.value = 0f
+        smoothedPlaybackLevel = 0f
         _highlights.value = emptyList()
         _state.value = AssistantState.IDLE
     }
@@ -485,6 +567,16 @@ class AssistantViewModel(
         wsClient.sendText(MessageParser.toJson(SetAutoScreenshotMessage(enabled = _autoScreenshot.value)))
     }
 
+    private fun getOrCreateClientId(): String {
+        val prefs = context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
+        val existing = prefs.getString("client_id", null)
+        if (existing != null) return existing
+        val newId = UUID.randomUUID().toString()
+        prefs.edit().putString("client_id", newId).apply()
+        Log.d(TAG, "Generated new clientId: $newId")
+        return newId
+    }
+
     private fun getPreferredLanguageCode(): String {
         val prefs = context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
         return prefs.getString("language_code", "en") ?: "en"
@@ -500,6 +592,10 @@ class AssistantViewModel(
         if (audioRecorder.isCurrentlyRecording()) {
             audioRecorder.stopRecording()
         }
+        _inputLevel.value = 0f
+        smoothedInputLevel = 0f
+        _playbackLevel.value = 0f
+        smoothedPlaybackLevel = 0f
         wsClient.disconnect()
         scope.cancel()
     }

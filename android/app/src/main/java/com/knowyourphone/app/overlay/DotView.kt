@@ -15,7 +15,10 @@ import android.view.animation.LinearInterpolator
 import android.view.animation.OvershootInterpolator
 import androidx.core.graphics.PathParser
 import com.knowyourphone.app.state.AssistantState
+import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.pow
+import kotlin.math.sin
 
 class DotView(context: Context) : View(context) {
     companion object {
@@ -67,6 +70,11 @@ class DotView(context: Context) : View(context) {
         color = COLOR_BORDER
     }
 
+    private val eqBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = COLOR_ICON
+    }
+
     private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
@@ -102,14 +110,30 @@ class DotView(context: Context) : View(context) {
         }
     }
 
-    private var eqAlpha = 255
-    private val eqAnimator = ValueAnimator.ofInt(120, 255).apply {
-        duration = 600
-        repeatMode = ValueAnimator.REVERSE
+    private var audioLevel = 0f
+    private var playbackLevel = 0f
+    private var inputReference = 0.18f
+    private var playbackReference = 0.18f
+    private var inputDrive = 0f
+    private var playbackDrive = 0f
+    private var previousInputDrive = 0f
+    private var previousPlaybackDrive = 0f
+    private val eqBarLevels = FloatArray(21) { 0f }
+    private val eqBarSignature = FloatArray(21) { i ->
+        val wave = 0.6f * sin((i + 1) * 1.37f) + 0.4f * sin((i + 1) * 0.71f)
+        wave * 0.18f
+    }
+    private val eqAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 32
         repeatCount = ValueAnimator.INFINITE
         interpolator = LinearInterpolator()
         addUpdateListener {
-            eqAlpha = it.animatedValue as Int
+            val sample = when (currentState) {
+                AssistantState.LISTENING -> inputDrive
+                AssistantState.SPEAKING -> playbackDrive
+                else -> 0f
+            }
+            pushHistorySample(sample)
             invalidate()
         }
     }
@@ -144,15 +168,6 @@ class DotView(context: Context) : View(context) {
         path("m4.9 4.9 2.9 2.9")
     )
 
-    private val audioPaths: List<Path> = listOf(
-        path("M2 10v3"),
-        path("M6 6v11"),
-        path("M10 3v18"),
-        path("M14 8v7"),
-        path("M18 5v13"),
-        path("M22 10v3")
-    )
-
     private val sparklesPaths: List<Path> = listOf(
         path("M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"),
         path("M20 2v4"),
@@ -174,24 +189,70 @@ class DotView(context: Context) : View(context) {
     }
 
     fun setState(state: AssistantState) {
+        val previousState = currentState
         currentState = state
         // Icon paint color is now only used for equalizer bars in center zone
         iconPaint.color = if (state == AssistantState.IDLE) COLOR_ICON_MUTED else COLOR_ICON
+        eqBarPaint.color = if (state == AssistantState.IDLE) COLOR_ICON_MUTED else COLOR_ICON
 
         loaderAnimator.cancel()
         eqAnimator.cancel()
         loaderRotation = 0f
-        eqAlpha = 255
 
         when (state) {
             AssistantState.LISTENING -> eqAnimator.start()
             AssistantState.THINKING -> loaderAnimator.start()
             AssistantState.SPEAKING -> eqAnimator.start()
-            else -> { /* no animation */ }
+            else -> {
+                audioLevel = 0f
+                playbackLevel = 0f
+                inputReference = 0.18f
+                playbackReference = 0.18f
+                inputDrive = 0f
+                playbackDrive = 0f
+                previousInputDrive = 0f
+                previousPlaybackDrive = 0f
+                clearHistory()
+                /* no animation */
+            }
+        }
+
+        if ((state == AssistantState.LISTENING || state == AssistantState.SPEAKING) && state != previousState) {
+            previousInputDrive = 0f
+            previousPlaybackDrive = 0f
+            clearHistory()
         }
 
         animateToTargetWidth()
         invalidate()
+    }
+
+    fun setAudioLevel(level: Float) {
+        val clamped = level.coerceIn(0f, 1f)
+        audioLevel = audioLevel * 0.55f + clamped * 0.45f
+        inputReference = updateReference(inputReference, audioLevel)
+        val targetDrive = normalizedDrive(audioLevel, inputReference)
+        val transient = abs(targetDrive - previousInputDrive)
+        previousInputDrive = targetDrive
+        val motion = (targetDrive * 0.72f + transient * 1.10f).coerceIn(0f, 1f)
+        inputDrive = inputDrive * 0.38f + motion * 0.62f
+        if (currentState == AssistantState.LISTENING) {
+            invalidate()
+        }
+    }
+
+    fun setPlaybackLevel(level: Float) {
+        val clamped = level.coerceIn(0f, 1f)
+        playbackLevel = playbackLevel * 0.52f + clamped * 0.48f
+        playbackReference = updateReference(playbackReference, playbackLevel)
+        val targetDrive = normalizedDrive(playbackLevel, playbackReference)
+        val transient = abs(targetDrive - previousPlaybackDrive)
+        previousPlaybackDrive = targetDrive
+        val motion = (targetDrive * 0.74f + transient * 1.00f).coerceIn(0f, 1f)
+        playbackDrive = playbackDrive * 0.42f + motion * 0.58f
+        if (currentState == AssistantState.SPEAKING) {
+            invalidate()
+        }
     }
 
     fun setConnectionState(state: ConnectionState) {
@@ -325,9 +386,7 @@ class DotView(context: Context) : View(context) {
 
         when (currentState) {
             AssistantState.LISTENING, AssistantState.SPEAKING -> {
-                // Dynamic equalizer animation in center
-                val eqCenterX = (centerZoneLeft + centerZoneRight) / 2f
-                drawLucide(canvas, audioPaths, eqCenterX, centerY, 18f, 0f, eqAlpha)
+                drawDynamicEqualizer(canvas, centerZoneLeft, centerZoneRight, centerY)
             }
             else -> {
                 // Text in center
@@ -352,35 +411,74 @@ class DotView(context: Context) : View(context) {
         }
     }
 
-    private fun drawLucide(
+    private fun drawDynamicEqualizer(
         canvas: Canvas,
-        paths: List<Path>,
-        cx: Float,
-        cy: Float,
-        sizeDp: Float,
-        rotation: Float,
-        alpha: Int
+        left: Float,
+        right: Float,
+        centerY: Float
     ) {
-        val sizePx = dp(sizeDp)
-        val scale = sizePx / 24f
-        val left = cx - sizePx / 2f
-        val top = cy - sizePx / 2f
+        val zoneWidth = right - left
+        if (zoneWidth <= 0f) return
 
-        iconPaint.alpha = alpha
-        canvas.save()
-        if (rotation != 0f) {
-            canvas.rotate(rotation, cx, cy)
+        val gap = dp(2f)
+        val maxBarWidth = dp(3f)
+        var barCount = ((zoneWidth + gap) / (maxBarWidth + gap)).toInt().coerceIn(13, 21)
+        if (barCount % 2 == 0) barCount -= 1
+
+        val barWidth = ((zoneWidth - gap * (barCount - 1)) / barCount)
+            .coerceAtLeast(dp(1.5f))
+            .coerceAtMost(maxBarWidth)
+        val usedWidth = barCount * barWidth + (barCount - 1) * gap
+        var x = left + (zoneWidth - usedWidth) / 2f
+
+        val minBarHeight = dp(2f)
+        val maxBarHeight = dp(30f)
+        val historyStart = (eqBarLevels.size - barCount).coerceAtLeast(0)
+
+        for (i in 0 until barCount) {
+            val historyIndex = historyStart + i
+            val levelHistory = eqBarLevels[historyIndex].coerceIn(0f, 1f)
+            val signature = (1f + eqBarSignature[historyIndex] * 0.03f).coerceIn(0.97f, 1.03f)
+            val level = (levelHistory * signature).coerceIn(0f, 1f)
+
+            val barHeight = minBarHeight + (maxBarHeight - minBarHeight) * level
+            val top = centerY - barHeight / 2f
+            val bottom = centerY + barHeight / 2f
+            val radius = barWidth / 2f
+
+            canvas.drawRoundRect(x, top, x + barWidth, bottom, radius, radius, eqBarPaint)
+            x += barWidth + gap
         }
-        tempMatrix.reset()
-        tempMatrix.setScale(scale, scale)
-        tempMatrix.postTranslate(left, top)
-        for (p in paths) {
-            tempPath.set(p)
-            tempPath.transform(tempMatrix)
-            canvas.drawPath(tempPath, iconPaint)
+    }
+
+    private fun updateReference(reference: Float, current: Float): Float {
+        if (current > reference) {
+            return reference * 0.70f + current * 0.30f
         }
-        canvas.restore()
-        iconPaint.alpha = 255
+        // Slow decay keeps normalization stable across short pauses.
+        return reference * 0.985f + current * 0.015f
+    }
+
+    private fun normalizedDrive(current: Float, reference: Float): Float {
+        val denom = (reference * 1.65f + 0.045f).coerceAtLeast(0.085f)
+        val normalized = (current / denom).coerceIn(0f, 1.2f)
+        val compressed = normalized.pow(0.95f).coerceIn(0f, 1f)
+        val gate = ((current - 0.020f) / 0.045f).coerceIn(0f, 1f)
+        return (compressed * gate).coerceIn(0f, 1f)
+    }
+
+    private fun pushHistorySample(sample: Float) {
+        val clamped = sample.coerceIn(0f, 1f)
+        for (i in 0 until eqBarLevels.lastIndex) {
+            eqBarLevels[i] = eqBarLevels[i + 1]
+        }
+        eqBarLevels[eqBarLevels.lastIndex] = clamped
+    }
+
+    private fun clearHistory() {
+        for (i in eqBarLevels.indices) {
+            eqBarLevels[i] = 0f
+        }
     }
 
     private fun drawIconInCircle(

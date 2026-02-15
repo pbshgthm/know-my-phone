@@ -7,6 +7,7 @@ import android.media.MediaRecorder
 import android.util.Log
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
+import kotlin.math.sqrt
 
 class AudioRecorder {
     companion object {
@@ -21,15 +22,18 @@ class AudioRecorder {
     @Volatile
     private var isRecording = false
     private var pcmBuffer = ByteArrayOutputStream()
+    @Volatile
+    private var levelListener: ((Float) -> Unit)? = null
 
     val bufferSize: Int
         get() = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
             .coerceAtLeast(4096)
 
     @SuppressLint("MissingPermission")
-    fun startRecording(scope: CoroutineScope): Boolean {
+    fun startRecording(scope: CoroutineScope, onLevelChanged: ((Float) -> Unit)? = null): Boolean {
         if (isRecording) return true
 
+        levelListener = onLevelChanged
         pcmBuffer.reset()
         val minBuf = bufferSize
 
@@ -59,6 +63,7 @@ class AudioRecorder {
                     synchronized(pcmBuffer) {
                         pcmBuffer.write(buffer, 0, read)
                     }
+                    levelListener?.invoke(computeNormalizedLevel(buffer, read))
                 }
             }
         }
@@ -79,6 +84,8 @@ class AudioRecorder {
         val data = synchronized(pcmBuffer) {
             pcmBuffer.toByteArray()
         }
+        levelListener?.invoke(0f)
+        levelListener = null
         Log.d(TAG, "Recording stopped, PCM size: ${data.size} bytes")
         return data
     }
@@ -93,8 +100,30 @@ class AudioRecorder {
         audioRecord = null
 
         pcmBuffer.reset()
+        levelListener?.invoke(0f)
+        levelListener = null
         Log.d(TAG, "Recording cancelled")
     }
 
     fun isCurrentlyRecording(): Boolean = isRecording
+
+    private fun computeNormalizedLevel(buffer: ByteArray, bytesRead: Int): Float {
+        if (bytesRead < 2) return 0f
+
+        var sumSquares = 0.0
+        var sampleCount = 0
+        var i = 0
+        while (i + 1 < bytesRead) {
+            val sample = (((buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xFF)).toShort()).toInt()
+            val normalized = sample / 32768.0
+            sumSquares += normalized * normalized
+            sampleCount++
+            i += 2
+        }
+
+        if (sampleCount == 0) return 0f
+        val rms = sqrt(sumSquares / sampleCount)
+        // Keep speech expressive but avoid constant saturation.
+        return (rms * 2.4).coerceIn(0.0, 1.0).toFloat()
+    }
 }

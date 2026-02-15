@@ -15,7 +15,8 @@ data class AudioDataMessage(
 
 data class HelloMessage(
     val type: String = "hello",
-    val sessionId: String
+    val sessionId: String,
+    val clientId: String? = null
 )
 
 data class ResetSessionMessage(

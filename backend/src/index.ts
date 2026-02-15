@@ -1,13 +1,21 @@
 import "dotenv/config";
 import express from "express";
+import { join } from "path";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import { handleConnection, getAllClients } from "./wsHandler.js";
+import apiRoutes from "./apiRoutes.js";
 
 const PORT = parseInt(process.env.PORT || "8765", 10);
 
 const app = express();
 app.use(express.json());
+
+// Serve web UI static files
+app.use(express.static(join(process.cwd(), "public")));
+
+// API routes for conversation viewer
+app.use(apiRoutes);
 
 // Health check endpoint
 app.get("/health", (_req, res) => {
@@ -18,22 +26,8 @@ app.get("/health", (_req, res) => {
   });
 });
 
-// Debug: log all incoming requests
-app.use((req, res, next) => {
-  console.log(`[Express] 📥 ${req.method} ${req.url} from ${req.ip}`);
-  console.log(`[Express] 🔍 Headers:`, JSON.stringify(req.headers, null, 2));
-  next();
-});
-
 // Create HTTP server and attach WebSocket
 const server = createServer(app);
-
-// Debug: Log ALL incoming connections at raw HTTP level
-server.on("request", (req, res) => {
-  console.log(`[HTTP] 🌐 ${req.method} ${req.url} from ${req.socket.remoteAddress}`);
-  console.log(`[HTTP] 🔍 Connection: ${req.headers.connection}`);
-  console.log(`[HTTP] 🔍 Upgrade: ${req.headers.upgrade}`);
-});
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -59,7 +53,8 @@ server.listen(PORT, () => {
   console.log(`🚀 Know Your Phone Backend Server`);
   console.log('='.repeat(60));
   console.log(`✅ Server running on port ${PORT}`);
-  console.log(`🌐 HTTP:      http://localhost:${PORT}/health`);
+  console.log(`🌐 Web UI:    http://localhost:${PORT}/`);
+  console.log(`🌐 Health:    http://localhost:${PORT}/health`);
   console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
   console.log('='.repeat(60));
   console.log(`📋 Environment:`);
