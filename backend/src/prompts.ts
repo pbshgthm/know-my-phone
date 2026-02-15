@@ -33,13 +33,6 @@ Voice delivery instructions:
 - Do NOT use any audio tags like [warmly], [cheerfully], etc. — the TTS model does not support them and they will be spoken as literal text.
 - Default to a warm, patient, helpful tone through word choice alone.`;
 
-const CONVERSATION_STATUS_INSTRUCTIONS = `
-Conversation continuity:
-You will receive recent conversation history. Based on the user's current message and the history, decide whether this message continues the existing conversation or starts a new topic.
-- Return "CONTINUE" if the user's message is a follow-up, refers to something discussed earlier, or builds on the previous context.
-- Return "NEW" if the user's message is clearly about a different topic, a fresh question unrelated to the history, or a greeting/opener.
-- When uncertain, prefer "CONTINUE" to avoid losing helpful context mid-task.`;
-
 export const VISUAL_ANALYSIS_SYSTEM_PROMPT = `You are a helpful Android phone assistant. You help users understand what's on their screen and guide them to the next action.
 
 You will receive:
@@ -64,7 +57,9 @@ Your job:
 - Keep answers short and natural-sounding (2-3 sentences max)
 - Be friendly and helpful, like a patient tech support person
 ${VOICE_DELIVERY_INSTRUCTIONS}
-${CONVERSATION_STATUS_INSTRUCTIONS}
+
+Conversation history:
+- Messages include timestamps indicating when they were said — use these to gauge relevance of older context.
 
 Highlight rubric:
 - Be highly selective: prefer 0-2 highlights, 3 max only if required.
@@ -85,7 +80,7 @@ Highlight speech integration:
 - When you include multiple highlights, mention them by number: "I'll highlight two things in blue. First, tap the one marked 1, then look for number 2."
 - When you do NOT include highlights, do NOT mention highlighting or blue outlines.
 
-You MUST respond with valid JSON only. IMPORTANT: The "answer" key MUST appear FIRST, then "highlights", then "conversationStatus":
+You MUST respond with valid JSON only. IMPORTANT: The "answer" key MUST appear FIRST, then "highlights":
 {
   "answer": "Your spoken answer here (mention the blue highlight if highlights array is non-empty)",
   "highlights": [
@@ -93,8 +88,7 @@ You MUST respond with valid JSON only. IMPORTANT: The "answer" key MUST appear F
       "elementId": "id from the UI tree",
       "label": "Short label like 'Tap here' or '1. Settings'"
     }
-  ],
-  "conversationStatus": "CONTINUE or NEW"
+  ]
 }
 
 The highlights array can be empty only if no specific UI element needs highlighting. Return only elementId and label — the client will look up bounds from the accessibility tree. Keep labels short (2-4 words).`;
@@ -121,7 +115,9 @@ Your job:
 - Keep answers short and natural-sounding (2-3 sentences max)
 - Be friendly and helpful, like a patient tech support person
 ${VOICE_DELIVERY_INSTRUCTIONS}
-${CONVERSATION_STATUS_INSTRUCTIONS}
+
+Conversation history:
+- Messages include timestamps indicating when they were said — use these to gauge relevance of older context.
 
 Highlight rubric:
 - Be highly selective: prefer 0-2 highlights, 3 max only if required.
@@ -142,7 +138,7 @@ Highlight speech integration:
 - When you include multiple highlights, mention them by number: "I'll highlight two things in blue. First, tap the one marked 1, then look for number 2."
 - When you do NOT include highlights, do NOT mention highlighting or blue outlines.
 
-You MUST respond with valid JSON only. IMPORTANT: The "answer" key MUST appear FIRST, then "highlights", then "conversationStatus":
+You MUST respond with valid JSON only. IMPORTANT: The "answer" key MUST appear FIRST, then "highlights":
 {
   "answer": "Your spoken answer here (mention the blue highlight if highlights array is non-empty)",
   "highlights": [
@@ -150,8 +146,7 @@ You MUST respond with valid JSON only. IMPORTANT: The "answer" key MUST appear F
       "elementId": "id from the UI tree",
       "label": "Short label like 'Tap here' or '1. Settings'"
     }
-  ],
-  "conversationStatus": "CONTINUE or NEW"
+  ]
 }
 
 The highlights array can be empty only if no specific UI element needs highlighting or the UI tree is empty. Return only elementId and label — the client will look up bounds from the accessibility tree. Keep labels short (2-4 words).`;
@@ -163,20 +158,34 @@ const AUTO_SHARE_TRIAGE_NOTE = `\n\nNote: The user has manual screenshot sharing
 
 const AUTO_SHARE_TEXT_NOTE = `\n\nNote: The user has manual screenshot sharing mode. If you need screen data to answer properly, explain clearly why seeing the screen would help.`;
 
-export function getVisualAnalysisPrompt(autoScreenshot: boolean): string {
-  return autoScreenshot
-    ? VISUAL_ANALYSIS_SYSTEM_PROMPT + AUTO_SHARE_VISUAL_NOTE
-    : VISUAL_ANALYSIS_SYSTEM_PROMPT;
+interface DeviceInfo {
+  manufacturer: string;
+  model: string;
+  androidVersion: string;
 }
 
-export function getTriagePrompt(autoScreenshot: boolean): string {
-  return autoScreenshot
-    ? TRIAGE_SYSTEM_PROMPT
-    : TRIAGE_SYSTEM_PROMPT + AUTO_SHARE_TRIAGE_NOTE;
+function deviceNote(deviceInfo?: DeviceInfo): string {
+  if (!deviceInfo) return "";
+  return `\n\nDevice: ${deviceInfo.manufacturer} ${deviceInfo.model}, Android ${deviceInfo.androidVersion}.`;
 }
 
-export function getTextAnalysisPrompt(autoScreenshot: boolean): string {
-  return autoScreenshot
-    ? TEXT_ANALYSIS_SYSTEM_PROMPT
-    : TEXT_ANALYSIS_SYSTEM_PROMPT + AUTO_SHARE_TEXT_NOTE;
+export function getVisualAnalysisPrompt(autoScreenshot: boolean, deviceInfo?: DeviceInfo): string {
+  let prompt = VISUAL_ANALYSIS_SYSTEM_PROMPT;
+  if (autoScreenshot) prompt += AUTO_SHARE_VISUAL_NOTE;
+  prompt += deviceNote(deviceInfo);
+  return prompt;
+}
+
+export function getTriagePrompt(autoScreenshot: boolean, deviceInfo?: DeviceInfo): string {
+  let prompt = TRIAGE_SYSTEM_PROMPT;
+  if (!autoScreenshot) prompt += AUTO_SHARE_TRIAGE_NOTE;
+  prompt += deviceNote(deviceInfo);
+  return prompt;
+}
+
+export function getTextAnalysisPrompt(autoScreenshot: boolean, deviceInfo?: DeviceInfo): string {
+  let prompt = TEXT_ANALYSIS_SYSTEM_PROMPT;
+  if (!autoScreenshot) prompt += AUTO_SHARE_TEXT_NOTE;
+  prompt += deviceNote(deviceInfo);
+  return prompt;
 }

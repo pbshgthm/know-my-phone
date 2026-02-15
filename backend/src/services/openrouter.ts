@@ -93,14 +93,21 @@ function parseJSON<T>(raw: string): T {
   return JSON.parse(cleaned) as T;
 }
 
+interface DeviceInfo {
+  manufacturer: string;
+  model: string;
+  androidVersion: string;
+}
+
 export async function triageQuery(
   userText: string,
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
   signal?: AbortSignal,
-  autoScreenshot: boolean = false
+  autoScreenshot: boolean = false,
+  deviceInfo?: DeviceInfo
 ): Promise<{ needsScreenshot: boolean; reason: string }> {
   const messages: ChatMessage[] = [
-    { role: "system", content: getTriagePrompt(autoScreenshot) },
+    { role: "system", content: getTriagePrompt(autoScreenshot, deviceInfo) },
     ...conversationHistory.map((h) => ({
       role: h.role as "user" | "assistant",
       content: h.content,
@@ -222,10 +229,11 @@ export async function* streamVisualAnalysis(
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
   signal?: AbortSignal,
   autoScreenshot: boolean = false,
-  redactions?: RedactionInfo[]
+  redactions?: RedactionInfo[],
+  deviceInfo?: DeviceInfo
 ): AsyncGenerator<string> {
   const messages: ChatMessage[] = [
-    { role: "system", content: getVisualAnalysisPrompt(autoScreenshot) },
+    { role: "system", content: getVisualAnalysisPrompt(autoScreenshot, deviceInfo) },
     ...conversationHistory.map((h) => ({
       role: h.role as "user" | "assistant",
       content: h.content,
@@ -255,10 +263,11 @@ export async function* streamTextAnalysis(
   uiTree: UiTree,
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
   signal?: AbortSignal,
-  autoScreenshot: boolean = false
+  autoScreenshot: boolean = false,
+  deviceInfo?: DeviceInfo
 ): AsyncGenerator<string> {
   const messages: ChatMessage[] = [
-    { role: "system", content: getTextAnalysisPrompt(autoScreenshot) },
+    { role: "system", content: getTextAnalysisPrompt(autoScreenshot, deviceInfo) },
     ...conversationHistory.map((h) => ({
       role: h.role as "user" | "assistant",
       content: h.content,

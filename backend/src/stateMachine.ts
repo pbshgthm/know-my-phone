@@ -5,7 +5,7 @@ import type {
   AnalysisResult,
   UiTree,
 } from "./protocol.js";
-import { addToHistory, getHistoryForLLM, checkInactivityReset, startNewConversation } from "./session.js";
+import { addToHistory, getHistoryForLLM, checkInactivityReset } from "./session.js";
 import { transcribeAudio, streamTextToSpeech } from "./services/elevenlabs.js";
 import {
   triageQuery,
@@ -22,6 +22,24 @@ import {
   saveUiTree,
 } from "./dataStore.js";
 import { StreamingAnswerParser, stripAudioTags } from "./streamParser.js";
+
+/** Minimum audio duration in seconds to bother sending to STT. */
+const MIN_AUDIO_DURATION_S = 0.6;
+
+/**
+ * Parse a WAV buffer header and return the audio duration in seconds.
+ * Returns 0 if the header is invalid or too short.
+ */
+function getWavDurationSeconds(buf: Buffer): number {
+  if (buf.length < 44) return 0;
+  const sampleRate = buf.readUInt32LE(24);
+  const bitsPerSample = buf.readUInt16LE(34);
+  const numChannels = buf.readUInt16LE(22);
+  const bytesPerSample = (bitsPerSample / 8) * numChannels;
+  if (sampleRate === 0 || bytesPerSample === 0) return 0;
+  const dataSize = buf.readUInt32LE(40);
+  return dataSize / (sampleRate * bytesPerSample);
+}
 
 function sendJSON(ws: WebSocket, data: object): void {
   if (ws.readyState === ws.OPEN) {
@@ -42,11 +60,11 @@ function sendError(ws: WebSocket, message: string): void {
 /** Fire-and-forget helper that logs errors */
 function saveTiming(
   clientId: string,
-  conversationId: string,
+  sessionId: string,
   turnId: number,
   updates: Record<string, unknown>
 ): void {
-  updateTurn(clientId, conversationId, turnId, updates).catch((err) =>
+  updateTurn(clientId, sessionId, turnId, updates).catch((err) =>
     console.error(`[DataStore] Failed to save timing:`, err)
   );
 }
@@ -97,7 +115,7 @@ export function cancelSession(ws: WebSocket, sessionId: string): void {
     pendingScreenshots.delete(sessionId);
   }
   sendJSON(ws, { type: "cancelled" });
-  console.log(`[${sessionId}] 🚫 Session cancelled`);
+  console.log(`[${sessionId}] Session cancelled`);
 }
 
 /**
@@ -109,39 +127,10 @@ async function applyInactivityCheck(session: Session): Promise<void> {
     await initConversation(
       session.clientId,
       session.conversationId,
-      session.languageCode
+      session.languageCode,
+      session.deviceInfo!
     );
   }
-}
-
-/**
- * Handle LLM-based session boundary: if the model returned "NEW",
- * start a fresh conversation for subsequent interactions.
- * The current exchange (userText + assistantText) becomes the seed
- * of the new conversation.
- */
-async function applyLlmSessionBoundary(
-  session: Session,
-  conversationStatus: string | undefined,
-  userText: string,
-  assistantText: string
-): Promise<void> {
-  if (conversationStatus !== "NEW") return;
-
-  console.log(
-    `[${session.id}] 🔀 LLM signalled NEW conversation, creating boundary`
-  );
-
-  startNewConversation(session);
-  await initConversation(
-    session.clientId,
-    session.conversationId,
-    session.languageCode
-  );
-
-  // Seed the new conversation's history with this exchange
-  if (userText) addToHistory(session, "user", userText);
-  addToHistory(session, "assistant", assistantText);
 }
 
 export async function handleAudioReceived(
@@ -149,6 +138,14 @@ export async function handleAudioReceived(
   session: Session,
   audioBuffer: Buffer
 ): Promise<void> {
+  // Discard audio that's too short — likely an accidental tap
+  const duration = getWavDurationSeconds(audioBuffer);
+  if (duration < MIN_AUDIO_DURATION_S) {
+    console.log(`[${session.id}] Audio too short (${duration.toFixed(2)}s < ${MIN_AUDIO_DURATION_S}s), discarding`);
+    sendError(ws, "Audio too short. Please hold the button a bit longer.");
+    return;
+  }
+
   // Create a fresh AbortController for this request (aborts any previous)
   const controller = resetSessionAbort(session.id);
   const signal = controller.signal;
@@ -162,7 +159,7 @@ export async function handleAudioReceived(
   const turnId = session.currentTurnId;
 
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`[${session.id}] 🎬 Starting audio processing pipeline (turn #${turnId}, conv=${session.conversationId})`);
+  console.log(`[${session.id}] Starting audio processing pipeline (turn #${turnId}, conv=${session.conversationId})`);
   console.log(`${'='.repeat(60)}\n`);
 
   // Save turn and audio to disk (fire and forget)
@@ -172,7 +169,7 @@ export async function handleAudioReceived(
 
   saveAudioInput(session.clientId, session.conversationId, turnId, audioBuffer)
     .then((file) =>
-      updateTurn(session.clientId, session.conversationId, turnId, { userAudioFile: file })
+      updateTurn(session.clientId, session.conversationId, turnId, { input: { audioFile: file } })
     )
     .catch((err) => console.error(`[DataStore] Failed to save audio input:`, err));
 
@@ -182,7 +179,7 @@ export async function handleAudioReceived(
     const timer = setTimeout(() => {
       if (pendingScreenshots.has(session.id)) {
         pendingScreenshots.delete(session.id);
-        console.warn(`[${session.id}] ⏰ Auto-screenshot timed out after 30s`);
+        console.warn(`[${session.id}] Auto-screenshot timed out after 30s`);
         sendError(ws, "Screenshot capture timed out.");
       }
     }, 30_000);
@@ -192,21 +189,21 @@ export async function handleAudioReceived(
       reason: "auto-screenshot",
       timer,
     });
-    console.log(`[${session.id}] 📸 Auto-screenshot ON — pending entry created before STT`);
+    console.log(`[${session.id}] Auto-screenshot ON — pending entry created before STT`);
   }
 
   try {
     // Step 1: STT
-    console.log(`[${session.id}] 📝 Step 1: Transcribing audio (${audioBuffer.length} bytes)...`);
-    saveTiming(session.clientId, session.conversationId, turnId, { sttStartedAt: Date.now() });
+    console.log(`[${session.id}] Step 1: Transcribing audio (${audioBuffer.length} bytes)...`);
+    saveTiming(session.clientId, session.conversationId, turnId, { timing: { sttStartedAt: new Date().toISOString() } });
     const startSTT = Date.now();
     const transcript = await transcribeAudio(audioBuffer, session.languageCode, signal);
     const sttTime = Date.now() - startSTT;
-    console.log(`[${session.id}] ✅ STT complete (${sttTime}ms)`);
-    console.log(`[${session.id}] 💬 Transcript: "${transcript}"`);
+    console.log(`[${session.id}] STT complete (${sttTime}ms)`);
+    console.log(`[${session.id}] Transcript: "${transcript}"`);
 
     if (!transcript || transcript.trim().length === 0) {
-      console.warn(`[${session.id}] ⚠️  Empty transcript, sending error to client`);
+      console.warn(`[${session.id}] Empty transcript, sending error to client`);
       // Clean up auto-screenshot pending entry
       const pending = pendingScreenshots.get(session.id);
       if (pending) {
@@ -219,12 +216,12 @@ export async function handleAudioReceived(
 
     // Save transcript + STT timing to disk
     saveTiming(session.clientId, session.conversationId, turnId, {
-      userTranscript: transcript,
-      sttCompletedAt: Date.now(),
+      input: { transcript },
+      timing: { sttCompletedAt: new Date().toISOString() },
     });
 
     // Send transcript back to client
-    console.log(`[${session.id}] 📤 Sending transcript to client`);
+    console.log(`[${session.id}] Sending transcript to client`);
     sendJSON(ws, { type: "transcript", text: transcript });
 
     // Auto-screenshot mode: update pending entry with transcript, check if screenshot already arrived
@@ -234,27 +231,27 @@ export async function handleAudioReceived(
         pending.userText = transcript;
         if (pending.bufferedScreenshot) {
           // Screenshot arrived during STT — process immediately
-          console.log(`[${session.id}] 📸 Buffered screenshot found, running visual analysis...`);
+          console.log(`[${session.id}] Buffered screenshot found, running visual analysis...`);
           clearTimeout(pending.timer);
           const msg = pending.bufferedScreenshot;
           pendingScreenshots.delete(session.id);
 
           if (msg.redacted) {
-            console.log(`[${session.id}] 🔒 Screenshot has PII redactions: ${msg.redactions?.length ?? 0} types`);
+            console.log(`[${session.id}] Screenshot has PII redactions: ${msg.redactions?.length ?? 0} types`);
           }
 
           // Save buffered screenshot + UI tree to disk
           saveTiming(session.clientId, session.conversationId, turnId, {
-            screenshotReceivedAt: Date.now(),
+            timing: { screenshotReceivedAt: new Date().toISOString() },
           });
           saveScreenshot(session.clientId, session.conversationId, turnId, msg.screenshot)
-            .then((file) => updateTurn(session.clientId, session.conversationId, turnId, { screenshotFile: file }))
+            .then((file) => updateTurn(session.clientId, session.conversationId, turnId, { screenshot: { file } }))
             .catch((err) => console.error(`[DataStore] Failed to save screenshot:`, err));
           saveUiTree(session.clientId, session.conversationId, turnId, msg.uiTree)
-            .then((file) => updateTurn(session.clientId, session.conversationId, turnId, { uiTreeFile: file }))
+            .then((file) => updateTurn(session.clientId, session.conversationId, turnId, { screenshot: { uiTreeFile: file } }))
             .catch((err) => console.error(`[DataStore] Failed to save UI tree:`, err));
 
-          saveTiming(session.clientId, session.conversationId, turnId, { llmStartedAt: Date.now() });
+          saveTiming(session.clientId, session.conversationId, turnId, { timing: { llmStartedAt: new Date().toISOString() } });
           const generator = streamVisualAnalysis(
             transcript,
             msg.screenshot,
@@ -262,7 +259,8 @@ export async function handleAudioReceived(
             getHistoryForLLM(session),
             signal,
             session.autoScreenshot,
-            msg.redactions
+            msg.redactions,
+            session.deviceInfo
           );
           await streamAnswerToClient(ws, session, generator, signal, transcript);
         }
@@ -272,18 +270,18 @@ export async function handleAudioReceived(
     }
 
     // Step 2: Triage - does this need a screenshot?
-    console.log(`[${session.id}] 🤔 Step 2: Running triage query...`);
-    saveTiming(session.clientId, session.conversationId, turnId, { triageStartedAt: Date.now() });
+    console.log(`[${session.id}] Step 2: Running triage query...`);
+    saveTiming(session.clientId, session.conversationId, turnId, { timing: { triageStartedAt: new Date().toISOString() } });
     const startTriage = Date.now();
-    const triage = await triageQuery(transcript, getHistoryForLLM(session), signal, session.autoScreenshot);
+    const triage = await triageQuery(transcript, getHistoryForLLM(session), signal, session.autoScreenshot, session.deviceInfo);
     const triageTime = Date.now() - startTriage;
-    console.log(`[${session.id}] ✅ Triage complete (${triageTime}ms)`);
-    console.log(`[${session.id}] 🔍 Triage result: needsScreenshot=${triage.needsScreenshot}, reason="${triage.reason}"`);
+    console.log(`[${session.id}] Triage complete (${triageTime}ms)`);
+    console.log(`[${session.id}] Triage result: needsScreenshot=${triage.needsScreenshot}, reason="${triage.reason}"`);
 
     // Save triage result + timing to disk
     saveTiming(session.clientId, session.conversationId, turnId, {
-      triageResult: { needsScreenshot: triage.needsScreenshot, reason: triage.reason },
-      triageCompletedAt: Date.now(),
+      triage: { needsScreenshot: triage.needsScreenshot, reason: triage.reason },
+      timing: { triageCompletedAt: new Date().toISOString() },
     });
 
     if (triage.needsScreenshot) {
@@ -291,7 +289,7 @@ export async function handleAudioReceived(
       const timer = setTimeout(() => {
         if (pendingScreenshots.has(session.id)) {
           pendingScreenshots.delete(session.id);
-          console.warn(`[${session.id}] ⏰ Screenshot request timed out after 60s`);
+          console.warn(`[${session.id}] Screenshot request timed out after 60s`);
           sendError(ws, "Screenshot request timed out.");
         }
       }, 60_000);
@@ -302,40 +300,41 @@ export async function handleAudioReceived(
         timer,
       });
 
-      console.log(`[${session.id}] 📸 Requesting screenshot from client`);
-      saveTiming(session.clientId, session.conversationId, turnId, { screenshotRequestedAt: Date.now() });
+      console.log(`[${session.id}] Requesting screenshot from client`);
+      saveTiming(session.clientId, session.conversationId, turnId, { timing: { screenshotRequestedAt: new Date().toISOString() } });
       sendJSON(ws, {
         type: "screenshot_request",
         text: "",
         reason: triage.reason,
         hasAudio: false,
       });
-      console.log(`[${session.id}] ⏸️  Waiting for screenshot response...\n`);
+      console.log(`[${session.id}] Waiting for screenshot response...\n`);
       return;
     }
 
     // Step 3: Streaming text analysis (no screenshot needed)
-    console.log(`[${session.id}] 💭 Step 3: Running streaming text analysis...`);
+    console.log(`[${session.id}] Step 3: Running streaming text analysis...`);
     const emptyUiTree: UiTree = {
       screen: { packageName: "unknown", timestamp: Date.now() },
       nodes: [],
     };
-    saveTiming(session.clientId, session.conversationId, turnId, { llmStartedAt: Date.now() });
+    saveTiming(session.clientId, session.conversationId, turnId, { timing: { llmStartedAt: new Date().toISOString() } });
     const textGenerator = streamTextAnalysis(
       transcript,
       emptyUiTree,
       getHistoryForLLM(session),
       signal,
-      session.autoScreenshot
+      session.autoScreenshot,
+      session.deviceInfo
     );
 
     await streamAnswerToClient(ws, session, textGenerator, signal, transcript);
   } catch (err) {
     if ((err as Error).name === "AbortError") {
-      console.log(`[${session.id}] 🚫 Audio pipeline aborted`);
+      console.log(`[${session.id}] Audio pipeline aborted`);
       return;
     }
-    console.error(`[${session.id}] ❌ Error in audio pipeline:`);
+    console.error(`[${session.id}] Error in audio pipeline:`);
     console.error(err);
     sendError(ws, "Something went wrong processing your request. Please try again.");
   }
@@ -354,7 +353,7 @@ export async function handleScreenshotResponse(
 
   // If STT hasn't completed yet (auto-screenshot mode), buffer the screenshot
   if (!pending.userText) {
-    console.log(`[${session.id}] 📸 STT still running, buffering screenshot...`);
+    console.log(`[${session.id}] STT still running, buffering screenshot...`);
     pending.bufferedScreenshot = message;
     return;
   }
@@ -371,20 +370,20 @@ export async function handleScreenshotResponse(
 
   // Save screenshot and UI tree to disk
   const turnId = session.currentTurnId;
-  saveTiming(session.clientId, session.conversationId, turnId, { screenshotReceivedAt: Date.now() });
+  saveTiming(session.clientId, session.conversationId, turnId, { timing: { screenshotReceivedAt: new Date().toISOString() } });
   saveScreenshot(session.clientId, session.conversationId, turnId, message.screenshot)
-    .then((file) => updateTurn(session.clientId, session.conversationId, turnId, { screenshotFile: file }))
+    .then((file) => updateTurn(session.clientId, session.conversationId, turnId, { screenshot: { file } }))
     .catch((err) => console.error(`[DataStore] Failed to save screenshot:`, err));
   saveUiTree(session.clientId, session.conversationId, turnId, message.uiTree)
-    .then((file) => updateTurn(session.clientId, session.conversationId, turnId, { uiTreeFile: file }))
+    .then((file) => updateTurn(session.clientId, session.conversationId, turnId, { screenshot: { uiTreeFile: file } }))
     .catch((err) => console.error(`[DataStore] Failed to save UI tree:`, err));
 
   try {
     if (message.redacted) {
-      console.log(`[${session.id}] 🔒 Screenshot has PII redactions: ${message.redactions?.length ?? 0} types`);
+      console.log(`[${session.id}] Screenshot has PII redactions: ${message.redactions?.length ?? 0} types`);
     }
     console.log(`[${session.id}] Running streaming visual analysis with screenshot...`);
-    saveTiming(session.clientId, session.conversationId, turnId, { llmStartedAt: Date.now() });
+    saveTiming(session.clientId, session.conversationId, turnId, { timing: { llmStartedAt: new Date().toISOString() } });
     const visualGenerator = streamVisualAnalysis(
       pending.userText,
       message.screenshot,
@@ -392,13 +391,14 @@ export async function handleScreenshotResponse(
       getHistoryForLLM(session),
       signal,
       session.autoScreenshot,
-      message.redactions
+      message.redactions,
+      session.deviceInfo
     );
 
     await streamAnswerToClient(ws, session, visualGenerator, signal, pending.userText);
   } catch (err) {
     if ((err as Error).name === "AbortError") {
-      console.log(`[${session.id}] 🚫 Visual analysis aborted`);
+      console.log(`[${session.id}] Visual analysis aborted`);
       return;
     }
     console.error(`[${session.id}] Error in visual analysis:`, err);
@@ -432,19 +432,20 @@ export async function handleScreenshotDeclined(
       screen: { packageName: "unknown", timestamp: Date.now() },
       nodes: [],
     };
-    saveTiming(session.clientId, session.conversationId, turnId, { llmStartedAt: Date.now() });
+    saveTiming(session.clientId, session.conversationId, turnId, { timing: { llmStartedAt: new Date().toISOString() } });
     const declinedGenerator = streamTextAnalysis(
       pending.userText,
       emptyUiTree,
       getHistoryForLLM(session),
       signal,
-      session.autoScreenshot
+      session.autoScreenshot,
+      session.deviceInfo
     );
 
     await streamAnswerToClient(ws, session, declinedGenerator, signal, pending.userText);
   } catch (err) {
     if ((err as Error).name === "AbortError") {
-      console.log(`[${session.id}] 🚫 Fallback analysis aborted`);
+      console.log(`[${session.id}] Fallback analysis aborted`);
       return;
     }
     console.error(`[${session.id}] Error in fallback analysis:`, err);
@@ -456,9 +457,6 @@ export async function handleScreenshotDeclined(
  * Stream LLM output through sentence-level TTS and send PCM chunks to the client.
  * Sends answer_start only when the first audio chunk is ready (client stays in
  * THINKING until then). On error, sends answer_end with whatever text we have.
- *
- * After the response is fully parsed, applies the LLM-based session boundary
- * logic: if conversationStatus is "NEW", a fresh conversation is started.
  */
 async function streamAnswerToClient(
   ws: WebSocket,
@@ -469,7 +467,6 @@ async function streamAnswerToClient(
 ): Promise<void> {
   const parser = new StreamingAnswerParser();
   const turnId = session.currentTurnId;
-  // Capture conversationId at the start — if the LLM says NEW we'll switch later
   const convId = session.conversationId;
   let sentenceCount = 0;
   let streamingStarted = false;
@@ -483,7 +480,7 @@ async function streamAnswerToClient(
     if (!streamingStarted) {
       if (!firstAudioRecorded) {
         firstAudioRecorded = true;
-        saveTiming(session.clientId, convId, turnId, { firstAudioSentAt: Date.now() });
+        saveTiming(session.clientId, convId, turnId, { timing: { ttsFirstAudioAt: new Date().toISOString() } });
       }
       sendJSON(ws, { type: "answer_start" });
       streamingStarted = true;
@@ -497,7 +494,7 @@ async function streamAnswerToClient(
 
       if (!firstTokenRecorded) {
         firstTokenRecorded = true;
-        saveTiming(session.clientId, convId, turnId, { llmFirstTokenAt: Date.now() });
+        saveTiming(session.clientId, convId, turnId, { timing: { llmFirstTokenAt: new Date().toISOString() } });
       }
 
       const sentences = parser.feed(chunk);
@@ -506,7 +503,7 @@ async function streamAnswerToClient(
         const clean = stripAudioTags(sentence);
         if (!clean) continue;
         sentenceCount++;
-        console.log(`[${session.id}] 🔊 Streaming TTS for sentence ${sentenceCount}: "${clean.substring(0, 50)}..."`);
+        console.log(`[${session.id}] Streaming TTS for sentence ${sentenceCount}: "${clean.substring(0, 50)}..."`);
 
         for await (const pcmChunk of streamTextToSpeech(clean, session.languageCode, signal)) {
           if (signal.aborted) throw new Error("AbortError");
@@ -518,7 +515,7 @@ async function streamAnswerToClient(
     }
 
     // LLM streaming done
-    saveTiming(session.clientId, convId, turnId, { llmDoneAt: Date.now() });
+    saveTiming(session.clientId, convId, turnId, { timing: { llmCompletedAt: new Date().toISOString() } });
 
     // Flush remaining text
     const remaining = parser.flush();
@@ -526,7 +523,7 @@ async function streamAnswerToClient(
       const clean = stripAudioTags(remaining);
       if (clean) {
         sentenceCount++;
-        console.log(`[${session.id}] 🔊 Streaming TTS for final fragment: "${clean.substring(0, 50)}..."`);
+        console.log(`[${session.id}] Streaming TTS for final fragment: "${clean.substring(0, 50)}..."`);
         for await (const pcmChunk of streamTextToSpeech(clean, session.languageCode, signal)) {
           if (signal.aborted) throw new Error("AbortError");
           ensureStreamStarted();
@@ -536,11 +533,10 @@ async function streamAnswerToClient(
       }
     }
 
-    // Parse full JSON for highlights + conversationStatus
+    // Parse full JSON for highlights
     const rawOutput = parser.getRawOutput();
     let cleanAnswer = "";
     let highlights: Array<{ elementId: string; label: string }> = [];
-    let conversationStatus: string | undefined;
     try {
       let cleaned = rawOutput.trim();
       if (cleaned.startsWith("```")) {
@@ -549,7 +545,6 @@ async function streamAnswerToClient(
       const parsed = JSON.parse(cleaned) as AnalysisResult;
       cleanAnswer = stripAudioTags(parsed.answer);
       highlights = parsed.highlights || [];
-      conversationStatus = parsed.conversationStatus;
     } catch {
       // If JSON parse fails, use the extracted answer text
       cleanAnswer = stripAudioTags(parser.flush() || rawOutput);
@@ -558,43 +553,32 @@ async function streamAnswerToClient(
     // Update last message timestamp
     session.lastMessageTimestamp = Date.now();
 
-    // --- LLM-based session boundary ---
-    // If the model signalled NEW, start a fresh conversation.
-    // The current turn's artifacts stay in the old conversation (convId),
-    // but the new conversation gets seeded with this exchange's history.
-    if (conversationStatus === "NEW") {
-      await applyLlmSessionBoundary(session, conversationStatus, userText, cleanAnswer);
-    } else {
-      // Normal CONTINUE path: append to existing history
-      if (userText) addToHistory(session, "user", userText);
-      addToHistory(session, "assistant", cleanAnswer);
-    }
+    // Always append to history
+    if (userText) addToHistory(session, "user", userText);
+    addToHistory(session, "assistant", cleanAnswer);
 
-    // Save timing data (to the original conversation where turn artifacts live)
+    // Save timing data
     saveTiming(session.clientId, convId, turnId, {
-      assistantText: cleanAnswer,
-      highlights,
-      conversationStatus,
-      sentenceCount,
-      completedAt: Date.now(),
+      output: { text: cleanAnswer, highlights },
+      timing: { sentenceCount, completedAt: new Date().toISOString() },
     });
 
     // Save audio output to disk for debugging (fire and forget)
     if (pcmChunks.length > 0) {
       saveAudioOutput(session.clientId, convId, turnId, pcmChunks)
-        .then((file) => updateTurn(session.clientId, convId, turnId, { assistantAudioFile: file }))
+        .then((file) => updateTurn(session.clientId, convId, turnId, { output: { audioFile: file } }))
         .catch((err) => console.error(`[DataStore] Failed to save audio output:`, err));
     }
 
     // Send answer_end with text and highlights
     sendJSON(ws, { type: "answer_end", text: cleanAnswer, highlights });
-    console.log(`[${session.id}] ✅ Streaming complete! ${sentenceCount} sentences sent (status=${conversationStatus ?? "CONTINUE"})`);
+    console.log(`[${session.id}] Streaming complete! ${sentenceCount} sentences sent`);
   } catch (err) {
     if ((err as Error).name === "AbortError" || (err as Error).message === "AbortError") {
-      console.log(`[${session.id}] 🚫 Streaming pipeline aborted`);
+      console.log(`[${session.id}] Streaming pipeline aborted`);
       return;
     }
-    console.error(`[${session.id}] ❌ Streaming pipeline failed:`, err);
+    console.error(`[${session.id}] Streaming pipeline failed:`, err);
 
     // Send answer_end with whatever text we managed to extract
     const rawOutput = parser.getRawOutput();

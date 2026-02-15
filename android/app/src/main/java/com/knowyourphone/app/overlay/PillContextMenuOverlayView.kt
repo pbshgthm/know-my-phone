@@ -104,7 +104,7 @@ class PillContextMenuOverlayView(
             ).apply {
                 marginStart = dp(12f).toInt()
                 marginEnd = dp(12f).toInt()
-            )
+            }
         }
     }
 

@@ -73,9 +73,9 @@
 let currentClientId = null;
 let currentConvId = null;
 let lastConvListJson = '';
-let lastConvUpdatedAt = 0;
+let lastConvUpdatedAt = '';
 let polling = null;
-const collapsedTurns = new Set(); // keys: 'clientId:convId:turnId'
+const collapsedTurns = new Set();
 
 function turnCollapseKey(clientId, convId, turnId) {
   return `${clientId || currentClientId}:${convId || currentConvId}:${turnId}`;
@@ -90,19 +90,29 @@ function toggleTurnCollapsed(turnId) {
 }
 
 // --- Formatting ---
-function fmtTime(ms) {
-  if (!ms) return '--';
-  const d = new Date(ms);
+/** Convert ISO string to epoch ms, or return null */
+function ms(iso) {
+  if (!iso) return null;
+  return new Date(iso).getTime();
+}
+/** Duration between two ISO strings in ms, or null */
+function dur(startIso, endIso) {
+  if (!startIso || !endIso) return null;
+  return new Date(endIso).getTime() - new Date(startIso).getTime();
+}
+function fmtTime(v) {
+  if (!v) return '--';
+  const d = new Date(v);
   return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})
     + '.' + String(d.getMilliseconds()).padStart(3,'0');
 }
-function fmtDate(ms) {
-  const d = new Date(ms);
-  return d.toLocaleDateString('en-CA') + ' ' + fmtTime(ms);
+function fmtDate(v) {
+  const d = new Date(v);
+  return d.toLocaleDateString('en-CA') + ' ' + fmtTime(v);
 }
-function fmtDur(ms) {
-  if (ms == null) return '--';
-  return ms < 1000 ? Math.round(ms) + 'ms' : (ms/1000).toFixed(2) + 's';
+function fmtDur(msVal) {
+  if (msVal == null) return '--';
+  return msVal < 1000 ? Math.round(msVal) + 'ms' : (msVal/1000).toFixed(2) + 's';
 }
 
 // --- URL state ---
@@ -133,7 +143,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       currentClientId = e.target.value;
       currentConvId = null;
       lastConvListJson = '';
-      lastConvUpdatedAt = 0;
+      lastConvUpdatedAt = '';
       writeHash(currentClientId, null);
       loadConversations(currentClientId);
       clearMain();
@@ -251,7 +261,7 @@ function buildConvCard(c, active) {
 
 function selectConv(convId) {
   currentConvId = convId;
-  lastConvUpdatedAt = 0;
+  lastConvUpdatedAt = '';
   writeHash(currentClientId, convId);
   document.querySelectorAll('#conversationList [data-id]').forEach(el => {
     const isActive = el.dataset.id === convId;
@@ -275,13 +285,17 @@ async function loadConversation(clientId, convId) {
 }
 
 function renderHeader(conv) {
+  const deviceStr = conv.deviceInfo
+    ? `${conv.deviceInfo.manufacturer} ${conv.deviceInfo.model}, Android ${conv.deviceInfo.androidVersion}`
+    : '';
   return `<div class="flex items-center justify-between w-full">
     <div class="flex items-center gap-3">
       <span class="text-[11px] text-neutral-500">${fmtDate(conv.createdAt)}</span>
       <span class="text-[10px] text-neutral-400">${conv.language} &middot; ${conv.turns.length} turn${conv.turns.length!==1?'s':''}</span>
-      <span class="text-[10px] text-neutral-300 font-mono">${conv.conversationId.slice(0,8)}</span>
+      ${deviceStr ? `<span class="text-[10px] text-neutral-400">${esc(deviceStr)}</span>` : ''}
+      <span class="text-[10px] text-neutral-300 font-mono">${conv.sessionId.slice(0,8)}</span>
     </div>
-    <button onclick="deleteConversation('${conv.clientId}','${conv.conversationId}')"
+    <button onclick="deleteConversation('${conv.clientId}','${conv.sessionId}')"
       class="text-neutral-400 hover:text-red-500 transition-colors" title="Delete">
       <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
     </button>
@@ -342,7 +356,12 @@ function renderTurn(t) {
   el.dataset.turnId = t.turnId;
 
   const base = `/api/data/${currentClientId}/${currentConvId}`;
-  const isInProgress = !t.completedAt && t.audioReceivedAt;
+  const tm = t.timing || {};
+  const inp = t.input || {};
+  const out = t.output || {};
+  const ss = t.screenshot || {};
+  const tri = t.triage;
+  const isInProgress = !tm.completedAt && tm.audioReceivedAt;
 
   let h = '';
 
@@ -352,58 +371,58 @@ function renderTurn(t) {
     <span class="turn-chevron text-neutral-400 flex-shrink-0" aria-hidden="true">▼</span>
     <div class="flex items-center gap-2 flex-1 min-w-0">
       <span class="text-[11px] font-medium text-neutral-900">#${t.turnId}</span>
-      <span class="text-[10px] text-neutral-400">${fmtTime(t.timestamp)}</span>
+      <span class="text-[10px] text-neutral-400">${fmtTime(tm.audioReceivedAt)}</span>
       ${t.autoScreenshot ? '<span class="text-[9px] text-neutral-400">auto-ss</span>' : ''}
       ${isInProgress ? '<span class="text-[9px] text-neutral-500 flex items-center gap-1"><span class="w-1 h-1 rounded-full bg-neutral-400 pulse"></span>processing</span>' : ''}
     </div>
-    ${t.triageResult ? `<span class="text-[9px] text-neutral-400 cursor-default flex-shrink-0" ${t.triageResult.reason ? `title="${esc(t.triageResult.reason)}"` : ''}>${t.triageResult.needsScreenshot ? 'visual' : 'text-only'}</span>` : ''}
+    ${tri ? `<span class="text-[9px] text-neutral-400 cursor-default flex-shrink-0" ${tri.reason ? `title="${esc(tri.reason)}"` : ''}>${tri.needsScreenshot ? 'visual' : 'text-only'}</span>` : ''}
   </div>`;
 
   h += `<div class="turn-body">`;
   // --- Pipeline timing breakdown ---
-  h += renderTimingTable(t);
+  h += renderTimingTable(tm);
 
   // --- User section ---
-  if (t.userTranscript || (t.audioReceivedAt && !t.sttCompletedAt)) {
+  if (inp.transcript || (tm.audioReceivedAt && !tm.sttCompletedAt)) {
     h += `<div class="px-3 py-2 border-b border-neutral-100">
       <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">user</div>`;
-    if (t.userTranscript) {
-      h += `<p class="text-[11px] text-neutral-800 leading-relaxed">${esc(t.userTranscript)}</p>`;
+    if (inp.transcript) {
+      h += `<p class="text-[11px] text-neutral-800 leading-relaxed">${esc(inp.transcript)}</p>`;
     } else {
       h += `<p class="text-[11px] text-neutral-400 italic">transcribing...</p>`;
     }
-    if (t.userAudioFile) {
+    if (inp.audioFile) {
       h += `<div class="mt-1.5 flex items-center gap-2">
         <span class="text-[9px] text-neutral-400 flex-shrink-0">input</span>
-        <audio controls preload="none" src="${base}/${t.userAudioFile}"></audio>
+        <audio controls preload="none" src="${base}/${inp.audioFile}"></audio>
       </div>`;
     }
     h += `</div>`;
   }
 
   // --- Screenshot request (if triage requested one) ---
-  if (t.screenshotRequestedAt) {
-    const waitDur = t.screenshotReceivedAt ? t.screenshotReceivedAt - t.screenshotRequestedAt : null;
+  if (tm.screenshotRequestedAt) {
+    const waitMs = dur(tm.screenshotRequestedAt, tm.screenshotReceivedAt);
     h += `<div class="px-3 py-1.5 border-b border-neutral-100 flex items-center gap-3">
       <span class="text-[9px] text-neutral-400 uppercase tracking-wider">screenshot requested</span>
-      <span class="text-[10px] text-neutral-400">${fmtTime(t.screenshotRequestedAt)}</span>
-      ${waitDur !== null ? `<span class="text-[10px] text-neutral-400">client responded in ${fmtDur(waitDur)}</span>` : '<span class="text-[10px] text-neutral-400 italic">waiting...</span>'}
+      <span class="text-[10px] text-neutral-400">${fmtTime(tm.screenshotRequestedAt)}</span>
+      ${waitMs !== null ? `<span class="text-[10px] text-neutral-400">client responded in ${fmtDur(waitMs)}</span>` : '<span class="text-[10px] text-neutral-400 italic">waiting...</span>'}
     </div>`;
   }
 
   // --- Screenshot + UI Tree side by side ---
-  if (t.screenshotFile || t.uiTreeFile) {
+  if (ss.file || ss.uiTreeFile) {
     const ssImgId = 'ssimg-'+t.turnId;
     h += `<div class="border-b border-neutral-100 flex items-start" style="position:relative">`;
-    if (t.screenshotFile) {
+    if (ss.file) {
       h += `<div class="flex-shrink-0 p-3 border-r border-neutral-100" style="width:300px">
-        <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">screenshot${t.screenshotReceivedAt ? ' \u2014 '+fmtTime(t.screenshotReceivedAt) : ''}</div>
-        <img id="${ssImgId}" loading="lazy" src="${base}/${t.screenshotFile}"
+        <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">screenshot${tm.screenshotReceivedAt ? ' \u2014 '+fmtTime(tm.screenshotReceivedAt) : ''}</div>
+        <img id="${ssImgId}" loading="lazy" src="${base}/${ss.file}"
           class="rounded border border-neutral-200 w-full cursor-pointer hover:opacity-90 transition-opacity"
-          onclick="showModal('${base}/${t.screenshotFile}')" />
+          onclick="showModal('${base}/${ss.file}')" />
       </div>`;
     }
-    if (t.uiTreeFile) {
+    if (ss.uiTreeFile) {
       const treeId = 'tree-'+t.turnId;
       h += `<div class="flex-1 min-w-0 p-3 flex flex-col" id="treewrap-${t.turnId}">
         <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">ui tree</div>
@@ -414,16 +433,16 @@ function renderTurn(t) {
   }
 
   // --- Assistant response ---
-  if (t.assistantText || (t.llmStartedAt && !t.completedAt)) {
+  if (out.text || (tm.llmStartedAt && !tm.completedAt)) {
     h += `<div class="px-3 py-2">
       <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">assistant</div>`;
-    if (t.assistantText) {
-      h += `<p class="text-[11px] text-neutral-800 leading-relaxed">${esc(t.assistantText)}</p>`;
-      if (t.highlights && t.highlights.length) {
+    if (out.text) {
+      h += `<p class="text-[11px] text-neutral-800 leading-relaxed">${esc(out.text)}</p>`;
+      if (out.highlights && out.highlights.length) {
         h += `<div class="mt-2">
           <span class="text-[9px] text-neutral-400 uppercase tracking-wider">highlighted elements</span>
           <div class="mt-1 flex flex-wrap gap-1.5">`;
-        t.highlights.forEach(hl => {
+        out.highlights.forEach(hl => {
           const bounds = hl.bounds ? ` [${hl.bounds.left},${hl.bounds.top} ${hl.bounds.right},${hl.bounds.bottom}]` : '';
           h += `<span class="text-[10px] px-2 py-0.5 rounded bg-neutral-100 text-neutral-600 border border-neutral-200">
             <span class="text-neutral-800">${esc(hl.label)}</span>
@@ -433,10 +452,10 @@ function renderTurn(t) {
         });
         h += `</div></div>`;
       }
-      if (t.assistantAudioFile) {
+      if (out.audioFile) {
         h += `<div class="mt-2 flex items-center gap-2">
           <span class="text-[9px] text-neutral-400 flex-shrink-0">output</span>
-          <audio controls preload="none" src="${base}/${t.assistantAudioFile}"></audio>
+          <audio controls preload="none" src="${base}/${out.audioFile}"></audio>
         </div>`;
       }
     } else {
@@ -450,13 +469,13 @@ function renderTurn(t) {
   if (collapsed) el.classList.add('turn-card--collapsed');
 
   // Auto-load UI tree
-  if (t.uiTreeFile) {
+  if (ss.uiTreeFile) {
     const treeId = 'tree-'+t.turnId;
-    setTimeout(() => loadTree(treeId, `${base}/${t.uiTreeFile}`), 0);
+    setTimeout(() => loadTree(treeId, `${base}/${ss.uiTreeFile}`), 0);
   }
 
   // Cap UI tree column height to screenshot height; tree content scrolls inside
-  if (t.screenshotFile && t.uiTreeFile) {
+  if (ss.file && ss.uiTreeFile) {
     const ssImgId = 'ssimg-'+t.turnId;
     const treeId = 'tree-'+t.turnId;
     setTimeout(() => {
@@ -477,29 +496,29 @@ function renderTurn(t) {
 }
 
 // --- Timing (streaming-aware two-row layout) ---
-function renderTimingTable(t) {
+function renderTimingTable(tm) {
   // Row 1: pipeline stages with arrows
   const stages = [];
-  if (t.sttStartedAt)       stages.push({ label: 'stt',     start: t.sttStartedAt,       end: t.sttCompletedAt });
-  if (t.triageStartedAt)    stages.push({ label: 'triage',  start: t.triageStartedAt,    end: t.triageCompletedAt });
-  if (t.screenshotRequestedAt && t.screenshotReceivedAt) {
-    stages.push({ label: 'ss wait', start: t.screenshotRequestedAt, end: t.screenshotReceivedAt });
+  if (tm.sttStartedAt)       stages.push({ label: 'stt',     start: tm.sttStartedAt,       end: tm.sttCompletedAt });
+  if (tm.triageStartedAt)    stages.push({ label: 'triage',  start: tm.triageStartedAt,    end: tm.triageCompletedAt });
+  if (tm.screenshotRequestedAt && tm.screenshotReceivedAt) {
+    stages.push({ label: 'ss wait', start: tm.screenshotRequestedAt, end: tm.screenshotReceivedAt });
   }
-  if (t.llmStartedAt && t.llmFirstTokenAt) {
-    stages.push({ label: 'llm\u21E2tok', start: t.llmStartedAt, end: t.llmFirstTokenAt });
-  } else if (t.llmStartedAt && !t.llmFirstTokenAt) {
-    stages.push({ label: 'llm\u21E2tok', start: t.llmStartedAt, end: null }); // still waiting for first token
+  if (tm.llmStartedAt && tm.llmFirstTokenAt) {
+    stages.push({ label: 'llm\u21E2tok', start: tm.llmStartedAt, end: tm.llmFirstTokenAt });
+  } else if (tm.llmStartedAt && !tm.llmFirstTokenAt) {
+    stages.push({ label: 'llm\u21E2tok', start: tm.llmStartedAt, end: null });
   }
-  if (t.firstAudioSentAt && t.audioReceivedAt) {
-    stages.push({ label: '1st\uD83D\uDD0A', start: t.audioReceivedAt, end: t.firstAudioSentAt, highlight: true });
+  if (tm.ttsFirstAudioAt && tm.audioReceivedAt) {
+    stages.push({ label: '1st\uD83D\uDD0A', start: tm.audioReceivedAt, end: tm.ttsFirstAudioAt, highlight: true });
   }
   if (!stages.length) return '';
 
   const parts = stages.map(s => {
-    const dur = (s.end || Date.now()) - s.start;
+    const d = dur(s.start, s.end) ?? (ms(s.start) ? Date.now() - ms(s.start) : null);
     const done = !!s.end;
     const hl = s.highlight ? ' text-neutral-900 font-semibold' : ' text-neutral-700 font-medium';
-    return `<span class="text-neutral-500">${s.label}</span> <span class="${hl.trim()}">${fmtDur(dur)}</span>${done ? '' : '<span class="pulse">\u2026</span>'}`;
+    return `<span class="text-neutral-500">${s.label}</span> <span class="${hl.trim()}">${fmtDur(d)}</span>${done ? '' : '<span class="pulse">\u2026</span>'}`;
   });
 
   let h = `<div class="px-3 py-1 border-b border-neutral-100 flex items-center gap-1 text-[10px] flex-wrap">`;
@@ -507,18 +526,18 @@ function renderTimingTable(t) {
   h += `</div>`;
 
   // Row 2: summary stats (only if we have at least llmStartedAt)
-  if (t.llmStartedAt) {
+  if (tm.llmStartedAt) {
     const stats = [];
-    if (t.llmDoneAt) {
-      stats.push(`<span class="text-neutral-500">llm</span> <span class="text-neutral-700 font-medium">${fmtDur(t.llmDoneAt - t.llmStartedAt)}</span>`);
-    } else if (t.llmStartedAt && !t.completedAt) {
-      stats.push(`<span class="text-neutral-500">llm</span> <span class="text-neutral-700 font-medium">${fmtDur(Date.now() - t.llmStartedAt)}</span><span class="pulse">\u2026</span>`);
+    if (tm.llmCompletedAt) {
+      stats.push(`<span class="text-neutral-500">llm</span> <span class="text-neutral-700 font-medium">${fmtDur(dur(tm.llmStartedAt, tm.llmCompletedAt))}</span>`);
+    } else if (!tm.completedAt) {
+      stats.push(`<span class="text-neutral-500">llm</span> <span class="text-neutral-700 font-medium">${fmtDur(Date.now() - ms(tm.llmStartedAt))}</span><span class="pulse">\u2026</span>`);
     }
-    if (t.sentenceCount != null) {
-      stats.push(`<span class="text-neutral-700 font-medium">${t.sentenceCount}</span> <span class="text-neutral-500">sent</span>`);
+    if (tm.sentenceCount != null) {
+      stats.push(`<span class="text-neutral-700 font-medium">${tm.sentenceCount}</span> <span class="text-neutral-500">sent</span>`);
     }
-    if (t.completedAt && t.audioReceivedAt) {
-      stats.push(`<span class="text-neutral-500">total</span> <span class="text-neutral-700 font-medium">${fmtDur(t.completedAt - t.audioReceivedAt)}</span>`);
+    if (tm.completedAt && tm.audioReceivedAt) {
+      stats.push(`<span class="text-neutral-500">total</span> <span class="text-neutral-700 font-medium">${fmtDur(dur(tm.audioReceivedAt, tm.completedAt))}</span>`);
     }
     if (stats.length) {
       h += `<div class="px-3 py-0.5 border-b border-neutral-100 flex items-center gap-1.5 text-[10px] justify-end">`;
@@ -558,7 +577,7 @@ async function deleteConversation(clientId, convId) {
   try {
     await fetch(`/api/clients/${clientId}/conversations/${convId}`, { method: 'DELETE' });
     currentConvId = null;
-    lastConvUpdatedAt = 0;
+    lastConvUpdatedAt = '';
     writeHash(currentClientId, null);
     clearMain();
     await loadConversations(currentClientId);
@@ -570,14 +589,14 @@ function clearMain() {
   document.getElementById('turnsContainer').classList.add('hidden');
   document.getElementById('turnsContainer').innerHTML = '';
   document.getElementById('placeholder').classList.remove('hidden');
-  lastConvUpdatedAt = 0;
+  lastConvUpdatedAt = '';
 }
 
 function clearAll() {
   currentClientId = null;
   currentConvId = null;
   lastConvListJson = '';
-  lastConvUpdatedAt = 0;
+  lastConvUpdatedAt = '';
   document.getElementById('conversationList').innerHTML = '';
   clearMain();
 }

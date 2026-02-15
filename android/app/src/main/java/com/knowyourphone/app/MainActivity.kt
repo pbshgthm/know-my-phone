@@ -29,7 +29,6 @@ import androidx.core.content.ContextCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.materialswitch.MaterialSwitch
-import com.google.android.material.snackbar.Snackbar
 import com.knowyourphone.app.i18n.LanguageManager
 
 class MainActivity : AppCompatActivity() {
@@ -68,8 +67,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var micRow: LinearLayout
     private lateinit var overlayRow: LinearLayout
     private lateinit var accessibilityRow: LinearLayout
-    private lateinit var startResetBtn: MaterialButton
-    private lateinit var stopBtn: MaterialButton
     private lateinit var autoShareSwitch: MaterialSwitch
 
     // Views that need localization updates
@@ -93,6 +90,7 @@ class MainActivity : AppCompatActivity() {
     private var selectedLanguageCode = "en"
     private val circleViews = mutableListOf<TextView>()
     private var uiBuilt = false
+    private var forceOpenedUi = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,8 +102,10 @@ class MainActivity : AppCompatActivity() {
                 OverlayService.start(this)
             }
             finish()
+            overridePendingTransition(0, 0)
             return
         }
+        setTheme(R.style.Theme_KnowYourPhone)
         buildUi()
         uiBuilt = true
     }
@@ -118,6 +118,7 @@ class MainActivity : AppCompatActivity() {
                 OverlayService.start(this)
             }
             finish()
+            overridePendingTransition(0, 0)
         }
     }
 
@@ -131,6 +132,7 @@ class MainActivity : AppCompatActivity() {
     private fun shouldAutoShowPillOnly(currentIntent: Intent?): Boolean {
         val forceOpenUi = currentIntent?.getBooleanExtra(EXTRA_FORCE_OPEN_UI, false) == true
         currentIntent?.removeExtra(EXTRA_FORCE_OPEN_UI)
+        if (forceOpenUi) forceOpenedUi = true
         return !forceOpenUi && allPermissionsGranted()
     }
 
@@ -336,43 +338,6 @@ class MainActivity : AppCompatActivity() {
         autoShareRow.addView(autoShareSwitch)
         root.addView(autoShareRow)
 
-        // --- Action Buttons ---
-        startResetBtn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonStyle).apply {
-            text = appStrings.startAssistant
-            setBackgroundColor(COLOR_PRIMARY)
-            setTextColor(Color.WHITE)
-            cornerRadius = dp(12)
-            textSize = scaledSp(15f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            isAllCaps = false
-            insetTop = 0
-            insetBottom = 0
-            minimumHeight = dp(48)
-            setOnClickListener { onStartOrResetClicked() }
-        }
-        root.addView(startResetBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-
-        stopBtn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-            text = appStrings.stop
-            setTextColor(COLOR_TEXT_SECONDARY)
-            strokeColor = ColorStateList.valueOf(COLOR_BORDER)
-            cornerRadius = dp(12)
-            textSize = scaledSp(14f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            isAllCaps = false
-            rippleColor = ColorStateList.valueOf(0x11111827)
-            insetTop = 0
-            insetBottom = 0
-            minimumHeight = dp(48)
-            setOnClickListener {
-                OverlayService.stop(this@MainActivity)
-                showSnackbar(LanguageManager.getAppStrings(selectedLanguageCode).stopped)
-            }
-        }
-        root.addView(stopBtn, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
-            topMargin = dp(8)
-        })
-
         scrollView.addView(root, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         coordinatorLayout.addView(scrollView, CoordinatorLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         setContentView(coordinatorLayout)
@@ -438,10 +403,6 @@ class MainActivity : AppCompatActivity() {
         accessibilityLabelText.text = s.accessibilityLabel
         accessibilitySubtitleText.text = s.accessibilitySubtitle
         accessibilityGrantBtn.text = s.grant
-        stopBtn.text = s.stop
-
-        // Update start button
-        startResetBtn.text = s.startAssistant
         applyLanguageTypography()
     }
 
@@ -527,14 +488,17 @@ class MainActivity : AppCompatActivity() {
         accessibilityRow.visibility = if (hasAccessibility) View.GONE else View.VISIBLE
 
         val allGranted = hasMic && hasOverlay && hasAccessibility
-        startResetBtn.isEnabled = allGranted
-        startResetBtn.alpha = if (allGranted) 1f else 0.4f
-
         permissionsCard.visibility = if (allGranted) View.GONE else View.VISIBLE
 
-        // Update button text based on service state
-        val s = LanguageManager.getAppStrings(selectedLanguageCode)
-        startResetBtn.text = s.startAssistant
+        // All permissions just became granted — auto-start pill and close settings
+        // But not if the user explicitly opened settings from the pill menu
+        if (allGranted && !forceOpenedUi) {
+            if (OverlayService.instance == null) {
+                OverlayService.start(this)
+            }
+            finish()
+            overridePendingTransition(0, 0)
+        }
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -546,32 +510,6 @@ class MainActivity : AppCompatActivity() {
                 "${it.packageName}/${it.name}" == myServiceName
             } == true
         }
-    }
-
-    private fun onStartOrResetClicked() {
-        val hasMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED
-        val hasOverlay = Settings.canDrawOverlays(this)
-        val hasAccessibility = isAccessibilityServiceEnabled()
-        val s = LanguageManager.getAppStrings(selectedLanguageCode)
-
-        if (!hasMic || !hasOverlay || !hasAccessibility) {
-            showSnackbar(s.permissionsFirst)
-            return
-        }
-
-        if (OverlayService.instance == null) {
-            OverlayService.start(this)
-        }
-
-        moveTaskToBack(true)
-    }
-
-    private fun showSnackbar(message: String) {
-        Snackbar.make(coordinatorLayout, message, Snackbar.LENGTH_SHORT)
-            .setBackgroundTint(COLOR_PRIMARY)
-            .setTextColor(Color.WHITE)
-            .show()
     }
 
     override fun onRequestPermissionsResult(
@@ -615,8 +553,6 @@ class MainActivity : AppCompatActivity() {
         accessibilitySubtitleText.textSize = scaledSp(11f)
         accessibilityGrantBtn.textSize = scaledSp(12f)
 
-        startResetBtn.textSize = scaledSp(15f)
-        stopBtn.textSize = scaledSp(14f)
         for (circle in circleViews) {
             circle.textSize = scaledSp(18f)
         }

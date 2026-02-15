@@ -10,12 +10,12 @@
         "thinking": "Thinking",
         "shareScreen": "Share screen",
         "idlePrompt": "Tap {mic} to ask",
-        "showOpenApp": "Show open app",
+        "showOpenApp": "Settings",
         "closeApp": "Close"
       },
       "app": {
         "title": "Know Your Phone",
-        "subtitle": "Voice assistant that guides you on your screen",
+        "subtitle": "Settings",
         "permissions": "Required permissions",
         "permissionsHelp": "To guide you on any app screen, Know Your Phone needs these three permissions.",
         "micLabel": "Microphone",
@@ -53,12 +53,12 @@
         "thinking": "सोच रहा हूँ",
         "shareScreen": "स्क्रीन शेयर करें",
         "idlePrompt": "पूछने के लिए {mic} दबाएँ",
-        "showOpenApp": "खुला ऐप दिखाएँ",
+        "showOpenApp": "सेटिंग्स",
         "closeApp": "बंद करें"
       },
       "app": {
         "title": "Know Your Phone",
-        "subtitle": "आपकी स्क्रीन देखकर सही अगला कदम बताने वाला वॉइस असिस्टेंट",
+        "subtitle": "सेटिंग्स",
         "permissions": "ज़रूरी परमिशन",
         "permissionsHelp": "किसी भी ऐप में सही मदद देने के लिए Know Your Phone को ये 3 परमिशन चाहिए।",
         "micLabel": "माइक्रोफ़ोन",
@@ -96,12 +96,12 @@
         "thinking": "சிந்தித்து பார்க்கிறேன்",
         "shareScreen": "திரையை பகிரவும்",
         "idlePrompt": "{mic} அழுத்தி கேளுங்கள்",
-        "showOpenApp": "திறந்த ஆப்பைக் காட்டு",
+        "showOpenApp": "அமைப்புகள்",
         "closeApp": "மூடு"
       },
       "app": {
         "title": "Know Your Phone",
-        "subtitle": "உங்கள் திரையை பார்த்து அடுத்த படி சொல்லும் குரல் உதவியாளர்",
+        "subtitle": "அமைப்புகள்",
         "permissions": "தேவையான அனுமதிகள்",
         "permissionsHelp": "எந்த ஆப்பிலும் சரியாக வழிகாட்ட Know Your Phone-க்கு இந்த 3 அனுமதிகள் தேவை.",
         "micLabel": "மைக்ரோஃபோன்",
@@ -139,12 +139,12 @@
         "thinking": "ಯೋಚಿಸುತ್ತಿದ್ದೇನೆ",
         "shareScreen": "ಸ್ಕ್ರೀನ್ ಹಂಚಿ",
         "idlePrompt": "{mic} ಒತ್ತಿ ಕೇಳಿ",
-        "showOpenApp": "ತೆರೆದ ಆಪ್ ತೋರಿಸಿ",
+        "showOpenApp": "ಸೆಟ್ಟಿಂಗ್ಸ್",
         "closeApp": "ಮುಚ್ಚಿ"
       },
       "app": {
         "title": "Know Your Phone",
-        "subtitle": "ನಿಮ್ಮ ಸ್ಕ್ರೀನ್ ನೋಡಿ ಸರಿಯಾದ ಮುಂದಿನ ಹೆಜ್ಜೆ ಹೇಳುವ ಧ್ವನಿ ಸಹಾಯಕ",
+        "subtitle": "ಸೆಟ್ಟಿಂಗ್ಸ್",
         "permissions": "ಬೇಕಾದ ಅನುಮತಿಗಳು",
         "permissionsHelp": "ಯಾವುದೇ ಆಪ್‌ನಲ್ಲಿ ಸರಿಯಾಗಿ ಮಾರ್ಗದರ್ಶನ ನೀಡಲು Know Your Phone ಗೆ ಈ 3 ಅನುಮತಿಗಳು ಬೇಕು.",
         "micLabel": "ಮೈಕ್ರೋಫೋನ್",
@@ -182,12 +182,12 @@
         "thinking": "ఆలోచిస్తున్నాను",
         "shareScreen": "స్క్రీన్ షేర్ చేయండి",
         "idlePrompt": "అడగాలంటే {mic} నొక్కండి",
-        "showOpenApp": "తెరిచిన యాప్ చూపించు",
+        "showOpenApp": "సెట్టింగ్స్",
         "closeApp": "మూసివేయి"
       },
       "app": {
         "title": "Know Your Phone",
-        "subtitle": "మీ స్క్రీన్ చూసి సరైన తర్వాతి స్టెప్ చెప్పే వాయిస్ అసిస్టెంట్",
+        "subtitle": "సెట్టింగ్స్",
         "permissions": "అవసరమైన అనుమతులు",
         "permissionsHelp": "ఏ యాప్‌లోనైనా సరైన మార్గదర్శనం ఇవ్వడానికి Know Your Phone కి ఈ 3 అనుమతులు అవసరం.",
         "micLabel": "మైక్రోఫోన్",
@@ -225,12 +225,12 @@
         "thinking": "ചിന്തിച്ചുകൊണ്ടിരിക്കുന്നു",
         "shareScreen": "സ്ക്രീൻ ഷെയർ ചെയ്യൂ",
         "idlePrompt": "ചോദിക്കാൻ {mic} അമർത്തൂ",
-        "showOpenApp": "തുറന്ന ആപ്പ് കാണിക്കുക",
+        "showOpenApp": "സെറ്റിംഗ്സ്",
         "closeApp": "അടയ്ക്കുക"
       },
       "app": {
         "title": "Know Your Phone",
-        "subtitle": "സ്ക്രീൻ നോക്കി ശരിയായ അടുത്ത പടി പറഞ്ഞുതരുന്ന വോയ്സ് അസിസ്റ്റന്റ്",
+        "subtitle": "സെറ്റിംഗ്സ്",
         "permissions": "ആവശ്യമായ അനുമതികൾ",
         "permissionsHelp": "ഏത് ആപ്പിലും ശരിയായി വഴികാട്ടാൻ Know Your Phone-ന് ഈ 3 അനുമതികൾ വേണം.",
         "micLabel": "മൈക്രോഫോൺ",

@@ -11,4 +11,12 @@
         <item name="android:navigationBarColor">#FAFAFA</item>
         <item name="android:windowLightNavigationBar">true</item>
     </style>
+
+    <!-- Transparent launcher theme: no window preview, no flash -->
+    <style name="Theme.KnowYourPhone.Launcher" parent="Theme.KnowYourPhone">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

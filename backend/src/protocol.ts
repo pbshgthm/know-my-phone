@@ -19,10 +19,17 @@ export interface AudioDataMessage {
   sampleRate: number;
 }
 
+export interface DeviceInfo {
+  manufacturer: string;
+  model: string;
+  androidVersion: string;
+}
+
 export interface HelloMessage {
   type: "hello";
   sessionId: string;
   clientId?: string;
+  deviceInfo: DeviceInfo;
 }
 
 export interface SetLanguageMessage {
@@ -150,5 +157,4 @@ export interface TriageResult {
 export interface AnalysisResult {
   answer: string;
   highlights: Highlight[];
-  conversationStatus?: "NEW" | "CONTINUE";
 }

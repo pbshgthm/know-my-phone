@@ -14,10 +14,17 @@ data class AudioDataMessage(
     val sampleRate: Int = 16000
 )
 
+data class DeviceInfo(
+    val manufacturer: String,
+    val model: String,
+    val androidVersion: String
+)
+
 data class HelloMessage(
     val type: String = "hello",
     val sessionId: String,
-    val clientId: String? = null
+    val clientId: String? = null,
+    val deviceInfo: DeviceInfo
 )
 
 data class SetLanguageMessage(

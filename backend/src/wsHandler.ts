@@ -119,11 +119,19 @@ function handleMessage(
         }
         state.sessionId = sessionId;
         state.session = getOrCreateSession(sessionId, clientId);
-        console.log(`[WS] 🔑 Bound to clientId=${clientId}, sessionId=${sessionId}`);
+        console.log(`[WS] Bound to clientId=${clientId}, sessionId=${sessionId}`);
       }
+      // Store device info
+      const di = parsed.deviceInfo as { manufacturer: string; model: string; androidVersion: string };
+      state.session.deviceInfo = {
+        manufacturer: di.manufacturer,
+        model: di.model,
+        androidVersion: di.androidVersion,
+      };
+      console.log(`[WS] Device: ${di.manufacturer} ${di.model}, Android ${di.androidVersion}`);
       // Initialize conversation data on disk
-      initConversation(clientId, state.session.conversationId, state.session.languageCode).catch((err) => {
-        console.error(`[WS] ❌ Failed to init conversation on disk:`, err);
+      initConversation(clientId, state.session.conversationId, state.session.languageCode, state.session.deviceInfo!).catch((err) => {
+        console.error(`[WS] Failed to init conversation on disk:`, err);
       });
       break;
     }

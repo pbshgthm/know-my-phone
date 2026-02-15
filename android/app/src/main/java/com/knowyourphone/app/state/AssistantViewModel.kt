@@ -2,6 +2,7 @@ package com.knowyourphone.app.state
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.util.Base64
 import android.util.Log
 import com.google.gson.Gson
@@ -124,7 +125,12 @@ class AssistantViewModel(
     private var highlightDismissJob: Job? = null
 
     private fun sendHello() {
-        wsClient.sendText(MessageParser.toJson(HelloMessage(sessionId = sessionId, clientId = clientId)))
+        val device = DeviceInfo(
+            manufacturer = Build.MANUFACTURER,
+            model = Build.MODEL,
+            androidVersion = Build.VERSION.RELEASE
+        )
+        wsClient.sendText(MessageParser.toJson(HelloMessage(sessionId = sessionId, clientId = clientId, deviceInfo = device)))
     }
 
     private fun sendLanguage() {
