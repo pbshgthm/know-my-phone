@@ -3,12 +3,12 @@
 - [ ] Try gemini flash for llm (google seach grounding enabled)
 - [ ] Try whisper on groq for SST
 - [ ] Make UI nicer
-- [ ] Add different voices for different languages
 - [ ] Create more elaborate agentic workflows involving scoped web search
 - [ ] More accurate and nicer highlights
-- [ ] More rigorous regex
 
 
+- [x] More rigorous regex
+- [x] Add different voices for different languages
 - [x] Use Eleven Labs to transcribe the audio
 - [x] Use streaming for SST and TTS
 - [x] Build a conversation visualizer for the backend

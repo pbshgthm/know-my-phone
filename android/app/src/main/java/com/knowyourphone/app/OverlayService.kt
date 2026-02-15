@@ -20,6 +20,7 @@ import com.knowyourphone.app.overlay.DotView
 import com.knowyourphone.app.overlay.ErrorToastView
 import com.knowyourphone.app.overlay.HighlightOverlayView
 import com.knowyourphone.app.overlay.PillContextMenuOverlayView
+import com.knowyourphone.app.overlay.ScreenshotFlashOverlayView
 import com.knowyourphone.app.state.AssistantState
 import com.knowyourphone.app.state.AssistantViewModel
 import kotlinx.coroutines.*
@@ -49,6 +50,7 @@ class OverlayService : Service() {
 
     private var dotView: DotView? = null
     private var highlightView: HighlightOverlayView? = null
+    private var screenshotFlashView: ScreenshotFlashOverlayView? = null
     private var errorToastView: ErrorToastView? = null
     private var contextMenuView: PillContextMenuOverlayView? = null
     private var dotParams: WindowManager.LayoutParams? = null
@@ -67,6 +69,7 @@ class OverlayService : Service() {
         val visibility = if (visible) View.VISIBLE else View.INVISIBLE
         dotView?.visibility = visibility
         highlightView?.visibility = if (visible && highlightView?.hasHighlights() == true) View.VISIBLE else View.GONE
+        screenshotFlashView?.visibility = if (visible && screenshotFlashView?.isFlashing() == true) View.VISIBLE else View.GONE
         errorToastView?.visibility = visibility
         contextMenuView?.visibility = visibility
     }
@@ -88,9 +91,10 @@ class OverlayService : Service() {
 
         val langCode = prefs.getString("language_code", "en") ?: "en"
 
+        addHighlightOverlay()
+        addScreenshotFlashOverlay()
         addDotOverlay()
         dotView?.setLanguageStrings(langCode, LanguageManager.getPillStrings(langCode))
-        addHighlightOverlay()
 
         viewModel.connect()
         observeState()
@@ -105,6 +109,7 @@ class OverlayService : Service() {
         dismissContextMenu()
         removeDotOverlay()
         removeHighlightOverlay()
+        removeScreenshotFlashOverlay()
         removeErrorToast()
         scope.cancel()
         Log.d(TAG, "Overlay service destroyed")
@@ -295,6 +300,28 @@ class OverlayService : Service() {
         highlightView = null
     }
 
+    private fun addScreenshotFlashOverlay() {
+        screenshotFlashView = ScreenshotFlashOverlayView(this)
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+        screenshotFlashView?.visibility = View.GONE
+        windowManager.addView(screenshotFlashView, params)
+    }
+
+    private fun removeScreenshotFlashOverlay() {
+        screenshotFlashView?.let {
+            try { windowManager.removeView(it) } catch (_: Exception) {}
+        }
+        screenshotFlashView = null
+    }
+
     // --- State observation ---
 
     private fun observeState() {
@@ -340,6 +367,12 @@ class OverlayService : Service() {
                     highlightView?.clear()
                     highlightView?.visibility = View.GONE
                 }
+            }
+        }
+
+        scope.launch {
+            viewModel.screenshotCaptured.collect {
+                screenshotFlashView?.flash()
             }
         }
 

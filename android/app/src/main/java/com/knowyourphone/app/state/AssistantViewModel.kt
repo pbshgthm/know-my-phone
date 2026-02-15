@@ -19,7 +19,9 @@ import com.knowyourphone.app.privacy.VisualRedaction
 import com.knowyourphone.app.privacy.PiiRedactionEngine
 import com.knowyourphone.app.util.WavEncoder
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.ByteArrayOutputStream
 import java.util.UUID
@@ -65,6 +67,9 @@ class AssistantViewModel(
     private val _playbackLevel = MutableStateFlow(0f)
     val playbackLevel: StateFlow<Float> = _playbackLevel
 
+    private val _screenshotCaptured = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val screenshotCaptured: SharedFlow<Unit> = _screenshotCaptured
+
     private val audioRecorder = AudioRecorder()
     private val promptPlayer = PromptAudioPlayer(context)
 
@@ -80,6 +85,8 @@ class AssistantViewModel(
 
     @Volatile
     private var pendingHighlights: List<HighlightTarget> = emptyList()
+    @Volatile
+    private var suppressServerUiTransitions = false
     @Volatile
     private var smoothedInputLevel = 0f
     @Volatile
@@ -197,7 +204,13 @@ class AssistantViewModel(
      */
     fun cancelRecordingIfListening() {
         if (_state.value != AssistantState.LISTENING) return
+        suppressServerUiTransitions = true
         audioRecorder.cancelRecording()
+        _highlights.value = emptyList()
+        highlightDismissJob?.cancel()
+        pendingHighlights = emptyList()
+        _confirmLabel.value = ""
+        _screenshotReason.value = ""
         _inputLevel.value = 0f
         smoothedInputLevel = 0f
         _playbackLevel.value = 0f
@@ -209,6 +222,13 @@ class AssistantViewModel(
      * X button cancel action — handles all states.
      */
     fun onCancel() {
+        suppressServerUiTransitions = true
+        _highlights.value = emptyList()
+        highlightDismissJob?.cancel()
+        pendingHighlights = emptyList()
+        _confirmLabel.value = ""
+        _screenshotReason.value = ""
+
         when (_state.value) {
             AssistantState.IDLE -> {
                 // Hide pill / stop service — handled by OverlayService
@@ -235,10 +255,8 @@ class AssistantViewModel(
                 _state.value = AssistantState.IDLE
             }
             AssistantState.SPEAKING -> {
+                sendCancel()
                 stopStreamingPlayer()
-                _highlights.value = emptyList()
-                highlightDismissJob?.cancel()
-                pendingHighlights = emptyList()
         
                 _inputLevel.value = 0f
                 smoothedInputLevel = 0f
@@ -306,6 +324,7 @@ class AssistantViewModel(
 
         scope.launch(Dispatchers.IO) {
             val wavData = WavEncoder.encode(pcmData)
+            suppressServerUiTransitions = false
 
             // Send text metadata frame first
             val meta = MessageParser.toJson(AudioDataMessage())
@@ -338,6 +357,9 @@ class AssistantViewModel(
 
     private fun handleServerMessage(json: String) {
         val message = MessageParser.parseServerMessage(json) ?: return
+        if (suppressServerUiTransitions && shouldIgnoreServerMessage(message)) {
+            return
+        }
 
         // AnswerStart: begin streaming audio mode — set flag on OkHttp reader thread
         if (message is ServerMessage.AnswerStart) {
@@ -495,6 +517,7 @@ class AssistantViewModel(
     }
 
     private fun handleBinaryMessage(data: ByteArray) {
+        if (suppressServerUiTransitions) return
         if (streamingAudio) {
             pcmChannel?.trySend(data)
         } else {
@@ -524,6 +547,7 @@ class AssistantViewModel(
      * User confirmed screenshot. Capture and send.
      */
     fun onScreenshotConfirm() {
+        suppressServerUiTransitions = false
         _state.value = AssistantState.THINKING
         captureAndSendScreenshot()
     }
@@ -545,6 +569,9 @@ class AssistantViewModel(
 
             // Capture screenshot (pill overlay stays visible — backend prompt knows to ignore it)
             accessibility.captureScreenshot { bitmap ->
+                if (bitmap != null) {
+                    _screenshotCaptured.tryEmit(Unit)
+                }
                 scope.launch(Dispatchers.IO) io@{
                     if (bitmap == null || uiTree == null) {
                         Log.e(TAG, "Failed to capture screenshot or UI tree")
@@ -613,6 +640,19 @@ class AssistantViewModel(
         val msg = ScreenshotDeclinedMessage()
         wsClient.sendText(MessageParser.toJson(msg))
         _state.value = AssistantState.IDLE
+    }
+
+    private fun shouldIgnoreServerMessage(message: ServerMessage): Boolean {
+        return when (message) {
+            is ServerMessage.Transcript,
+            is ServerMessage.NeedScreenshot,
+            is ServerMessage.ScreenshotRequest,
+            is ServerMessage.AnswerStart,
+            is ServerMessage.Highlights,
+            is ServerMessage.AnswerEnd,
+            is ServerMessage.Error -> true
+            is ServerMessage.Cancelled -> false
+        }
     }
 
     fun setLanguage(code: String) {
