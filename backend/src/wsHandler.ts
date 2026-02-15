@@ -1,6 +1,13 @@
 import type WebSocket from "ws";
 import type { RawData } from "ws";
-import { createSession, deleteSession, type Session } from "./session.js";
+import {
+  createSession,
+  deleteSession,
+  getOrCreateSessionForClient,
+  resetSessionForClient,
+  getMessageCounts,
+  type Session,
+} from "./session.js";
 import type { ScreenshotResponseMessage } from "./protocol.js";
 import {
   handleAudioReceived,
@@ -13,9 +20,11 @@ import {
 interface ClientState {
   session: Session;
   pendingAudioData: boolean;
+  clientId?: string;
 }
 
 const clients = new Map<WebSocket, ClientState>();
+const SUPPORTED_LANGUAGES = new Set(["en", "ta", "hi", "kn", "te"]);
 
 export function getAllClients(): Map<WebSocket, ClientState> {
   return clients;
@@ -26,6 +35,7 @@ export function handleConnection(ws: WebSocket): void {
   const state: ClientState = {
     session,
     pendingAudioData: false,
+    clientId: undefined,
   };
   clients.set(ws, state);
 
@@ -40,10 +50,13 @@ export function handleConnection(ws: WebSocket): void {
   });
 
   ws.on("close", () => {
-    console.log(`\n[WS] 👋 Client disconnected, session: ${session.id}`);
+    console.log(`\n[WS] 👋 Client disconnected, session: ${state.session.id}`);
     console.log(`[WS] 👥 Active connections: ${clients.size - 1}\n`);
-    cleanupSession(session.id);
-    deleteSession(session.id);
+    cleanupSession(state.session.id);
+    // Keep session in memory if we have a clientId (for reconnect resume)
+    if (!state.clientId) {
+      deleteSession(state.session.id);
+    }
     clients.delete(ws);
   });
 
@@ -93,6 +106,62 @@ function handleMessage(
   }
 
   switch (parsed.type) {
+    case "hello": {
+      const clientId = typeof parsed.clientId === "string" ? parsed.clientId : "";
+      if (!clientId) {
+        ws.send(JSON.stringify({ type: "error", message: "Missing clientId" }));
+        return;
+      }
+      // Rebind session to this clientId
+      if (state.clientId !== clientId) {
+        // Clean up old session if it was anonymous
+        if (!state.clientId) {
+          cleanupSession(state.session.id);
+          deleteSession(state.session.id);
+        }
+        state.clientId = clientId;
+        state.session = getOrCreateSessionForClient(clientId);
+        console.log(`[WS] 🔑 Bound session ${state.session.id} to clientId=${clientId}`);
+      }
+      const counts = getMessageCounts(state.session);
+      ws.send(
+        JSON.stringify({
+          type: "session_status",
+          sessionId: state.session.id,
+          userCount: counts.userCount,
+          assistantCount: counts.assistantCount,
+        })
+      );
+      break;
+    }
+
+    case "reset_session": {
+      if (!state.clientId) {
+        ws.send(JSON.stringify({ type: "error", message: "No clientId; cannot reset session" }));
+        return;
+      }
+      cleanupSession(state.session.id);
+      state.session = resetSessionForClient(state.clientId, state.session.languageCode);
+      console.log(`[WS] 🔄 Session reset for clientId=${state.clientId}, new session=${state.session.id}`);
+      ws.send(
+        JSON.stringify({
+          type: "session_status",
+          sessionId: state.session.id,
+          userCount: 0,
+          assistantCount: 0,
+        })
+      );
+      break;
+    }
+
+    case "set_language": {
+      const raw = typeof parsed.languageCode === "string" ? parsed.languageCode : "en";
+      const normalized = raw.trim().toLowerCase();
+      state.session.languageCode = SUPPORTED_LANGUAGES.has(normalized) ? normalized : "en";
+      console.log(`[WS] 🌐 Session ${state.session.id}: language=${state.session.languageCode}`);
+      break;
+    }
+
     case "audio_data":
       // Next binary frame will contain the audio
       state.pendingAudioData = true;

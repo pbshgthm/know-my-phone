@@ -6,7 +6,7 @@ import type {
   AnalysisResult,
   UiTree,
 } from "./protocol.js";
-import { addToHistory, getHistoryForLLM } from "./session.js";
+import { addToHistory, getHistoryForLLM, getMessageCounts } from "./session.js";
 import { transcribeAudio } from "./services/whisper.js";
 import { triageQuery, visualAnalysis, textAnalysis } from "./services/openrouter.js";
 import { textToSpeech } from "./services/elevenlabs.js";
@@ -25,6 +25,16 @@ function sendBinary(ws: WebSocket, data: Buffer): void {
 
 function sendError(ws: WebSocket, message: string): void {
   sendJSON(ws, { type: "error", message });
+}
+
+function sendSessionStatus(ws: WebSocket, session: Session): void {
+  const counts = getMessageCounts(session);
+  sendJSON(ws, {
+    type: "session_status",
+    sessionId: session.id,
+    userCount: counts.userCount,
+    assistantCount: counts.assistantCount,
+  });
 }
 
 interface PendingScreenshotRequest {
@@ -92,7 +102,7 @@ export async function handleAudioReceived(
     // Step 1: STT
     console.log(`[${session.id}] 📝 Step 1/4: Transcribing audio (${audioBuffer.length} bytes)...`);
     const startSTT = Date.now();
-    const transcript = await transcribeAudio(audioBuffer, signal);
+    const transcript = await transcribeAudio(audioBuffer, session.languageCode, signal);
     const sttTime = Date.now() - startSTT;
     console.log(`[${session.id}] ✅ STT complete (${sttTime}ms)`);
     console.log(`[${session.id}] 💬 Transcript: "${transcript}"`);
@@ -110,6 +120,7 @@ export async function handleAudioReceived(
     // Add user message to history
     addToHistory(session, "user", transcript);
     console.log(`[${session.id}] 📚 Added to history (total: ${session.conversationHistory.length} messages)`);
+    sendSessionStatus(ws, session);
 
     // Step 2: Triage - does this need a screenshot?
     console.log(`[${session.id}] 🤔 Step 2/4: Running triage query...`);
@@ -134,11 +145,26 @@ export async function handleAudioReceived(
         reason: triage.reason,
         timer,
       });
-      console.log(`[${session.id}] 📸 Requesting screenshot from client`);
-      sendJSON(ws, {
-        type: "need_screenshot",
-        reason: triage.reason,
-      });
+
+      const requestSpeech =
+        triage.requestSpeech?.trim() ||
+        "I need to see your screen to help with that. Tap when you're ready.";
+      console.log(`[${session.id}] 📸 Requesting screenshot from client (with audio prompt)`);
+      try {
+        await sendScreenshotRequest(ws, session, requestSpeech, triage.reason, signal);
+        if (signal.aborted) {
+          pendingScreenshots.delete(session.id);
+          return;
+        }
+      } catch (err) {
+        pendingScreenshots.delete(session.id);
+        if ((err as Error).name === "AbortError") {
+          console.log(`[${session.id}] 🚫 Screenshot request aborted`);
+          return;
+        }
+        console.error(`[${session.id}] ❌ Failed to send screenshot request:`, err);
+        sendError(ws, "Could not request a screenshot. Please try again.");
+      }
       console.log(`[${session.id}] ⏸️  Waiting for screenshot response...\n`);
       return;
     }
@@ -265,6 +291,7 @@ async function sendAnswer(
   // Add assistant response to history
   addToHistory(session, "assistant", result.answer);
   console.log(`[${session.id}] 📚 Added assistant response to history`);
+  sendSessionStatus(ws, session);
 
   // Check if aborted before TTS
   if (signal?.aborted) {
@@ -277,7 +304,7 @@ async function sendAnswer(
   let mp3Buffer: Buffer;
   const startTTS = Date.now();
   try {
-    mp3Buffer = await textToSpeech(result.answer, signal);
+    mp3Buffer = await textToSpeech(result.answer, session.languageCode, signal);
     const ttsTime = Date.now() - startTTS;
     console.log(`[${session.id}] ✅ TTS generated (${mp3Buffer.length} bytes, ${ttsTime}ms)`);
   } catch (err) {
@@ -310,6 +337,51 @@ async function sendAnswer(
   sendJSON(ws, answerMsg);
   sendBinary(ws, mp3Buffer);
   console.log(`[${session.id}] ✅ Complete! Answer sent to client\n`);
+}
+
+async function sendScreenshotRequest(
+  ws: WebSocket,
+  session: Session,
+  requestSpeech: string,
+  reason: string,
+  signal?: AbortSignal
+): Promise<void> {
+  // Add assistant response (spoken request) to history
+  addToHistory(session, "assistant", requestSpeech);
+  console.log(`[${session.id}] 📚 Added screenshot request to history`);
+  sendSessionStatus(ws, session);
+
+  if (signal?.aborted) {
+    console.log(`[${session.id}] 🚫 Aborted before screenshot TTS`);
+    return;
+  }
+
+  // TTS for screenshot request
+  let mp3Buffer: Buffer;
+  const startTTS = Date.now();
+  try {
+    mp3Buffer = await textToSpeech(requestSpeech, session.languageCode, signal);
+    const ttsTime = Date.now() - startTTS;
+    console.log(`[${session.id}] ✅ Screenshot request TTS generated (${mp3Buffer.length} bytes, ${ttsTime}ms)`);
+  } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      console.log(`[${session.id}] 🚫 Screenshot request TTS aborted`);
+      return;
+    }
+    console.error(`[${session.id}] ❌ Screenshot request TTS failed:`);
+    console.error(err);
+    throw err;
+  }
+
+  // Send screenshot request text + audio
+  sendJSON(ws, {
+    type: "screenshot_request",
+    text: requestSpeech,
+    reason,
+    hasAudio: true,
+  });
+  sendBinary(ws, mp3Buffer);
+  console.log(`[${session.id}] 📤 Sent screenshot request + MP3`);
 }
 
 export function cleanupSession(sessionId: string): void {

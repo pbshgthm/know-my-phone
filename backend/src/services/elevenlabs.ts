@@ -1,15 +1,48 @@
 const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1";
 
-export async function textToSpeech(text: string, signal?: AbortSignal): Promise<Buffer> {
+function resolveVoiceId(languageCode: string): string {
+  const voiceByLang: Record<string, string | undefined> = {
+    en: process.env.ELEVENLABS_VOICE_ID_EN,
+    ta: process.env.ELEVENLABS_VOICE_ID_TA,
+    hi: process.env.ELEVENLABS_VOICE_ID_HI,
+    kn: process.env.ELEVENLABS_VOICE_ID_KN,
+    te: process.env.ELEVENLABS_VOICE_ID_TE,
+  };
+
+  return (
+    voiceByLang[languageCode] ||
+    process.env.ELEVENLABS_VOICE_ID ||
+    "21m00Tcm4TlvDq8ikWAM"
+  );
+}
+
+function resolveModelId(languageCode: string): string {
+  const modelByLang: Record<string, string | undefined> = {
+    en: process.env.ELEVENLABS_MODEL_ID_EN,
+    ta: process.env.ELEVENLABS_MODEL_ID_TA,
+    hi: process.env.ELEVENLABS_MODEL_ID_HI,
+    kn: process.env.ELEVENLABS_MODEL_ID_KN,
+    te: process.env.ELEVENLABS_MODEL_ID_TE,
+  };
+
+  return modelByLang[languageCode] || process.env.ELEVENLABS_MODEL_ID || "eleven_turbo_v2_5";
+}
+
+export async function textToSpeech(
+  text: string,
+  languageCode: string,
+  signal?: AbortSignal
+): Promise<Buffer> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
     console.error(`[ElevenLabs] ❌ ELEVENLABS_API_KEY not set in environment`);
     throw new Error("ELEVENLABS_API_KEY not set");
   }
 
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // default: Rachel
+  const voiceId = resolveVoiceId(languageCode);
+  const modelId = resolveModelId(languageCode);
 
-  console.log(`[ElevenLabs] 🔊 Generating TTS for text (${text.length} chars, voice: ${voiceId})...`);
+  console.log(`[ElevenLabs] 🔊 Generating TTS for text (${text.length} chars, voice: ${voiceId}, lang: ${languageCode}, model: ${modelId})...`);
 
   const fetchSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
@@ -26,7 +59,8 @@ export async function textToSpeech(text: string, signal?: AbortSignal): Promise<
       },
       body: JSON.stringify({
         text,
-        model_id: "eleven_turbo_v2_5",
+        model_id: modelId,
+        language_code: languageCode,
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75,

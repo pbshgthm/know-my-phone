@@ -13,6 +13,20 @@ data class AudioDataMessage(
     val sampleRate: Int = 16000
 )
 
+data class HelloMessage(
+    val type: String = "hello",
+    val clientId: String
+)
+
+data class ResetSessionMessage(
+    val type: String = "reset_session"
+)
+
+data class SetLanguageMessage(
+    val type: String = "set_language",
+    val languageCode: String
+)
+
 data class ScreenshotResponseMessage(
     val type: String = "screenshot_response",
     val screenshot: String, // base64 JPEG
@@ -32,7 +46,9 @@ data class CancelMessage(
 sealed class ServerMessage {
     data class Transcript(val text: String) : ServerMessage()
     data class NeedScreenshot(val reason: String) : ServerMessage()
+    data class ScreenshotRequest(val text: String, val reason: String, val hasAudio: Boolean) : ServerMessage()
     data class Answer(val text: String, val highlights: List<HighlightTarget>, val hasAudio: Boolean) : ServerMessage()
+    data class SessionStatus(val sessionId: String, val userCount: Int, val assistantCount: Int) : ServerMessage()
     data class Error(val message: String) : ServerMessage()
     object Cancelled : ServerMessage()
 }
@@ -50,6 +66,11 @@ object MessageParser {
                 "need_screenshot" -> ServerMessage.NeedScreenshot(
                     reason = obj.get("reason")?.asString ?: ""
                 )
+                "screenshot_request" -> ServerMessage.ScreenshotRequest(
+                    text = obj.get("text")?.asString ?: "",
+                    reason = obj.get("reason")?.asString ?: "",
+                    hasAudio = obj.get("hasAudio")?.asBoolean ?: false
+                )
                 "answer" -> {
                     val highlights = mutableListOf<HighlightTarget>()
                     obj.getAsJsonArray("highlights")?.forEach { elem ->
@@ -62,6 +83,11 @@ object MessageParser {
                         hasAudio = obj.get("hasAudio")?.asBoolean ?: false
                     )
                 }
+                "session_status" -> ServerMessage.SessionStatus(
+                    sessionId = obj.get("sessionId")?.asString ?: "",
+                    userCount = obj.get("userCount")?.asInt ?: 0,
+                    assistantCount = obj.get("assistantCount")?.asInt ?: 0
+                )
                 "error" -> ServerMessage.Error(
                     message = obj.get("message")?.asString ?: "Unknown error"
                 )

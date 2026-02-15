@@ -9,29 +9,35 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
-import android.widget.Button
-import android.widget.EditText
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.graphics.Color
+import android.widget.Spinner
+import android.widget.ArrayAdapter
+import android.widget.AdapterView
 
 class MainActivity : AppCompatActivity() {
     companion object {
         private const val REQUEST_MIC = 100
     }
 
-    private lateinit var micStatus: ImageView
-    private lateinit var overlayStatus: ImageView
-    private lateinit var accessibilityStatus: ImageView
-    private lateinit var micBtn: Button
-    private lateinit var overlayBtn: Button
-    private lateinit var accessibilityBtn: Button
-    private lateinit var startBtn: Button
-    private lateinit var serverUrlInput: EditText
+    private lateinit var permissionsContainer: LinearLayout
+    private lateinit var micRow: LinearLayout
+    private lateinit var overlayRow: LinearLayout
+    private lateinit var accessibilityRow: LinearLayout
+    private lateinit var micBtn: TextView
+    private lateinit var overlayBtn: TextView
+    private lateinit var accessibilityBtn: TextView
+    private lateinit var startResetBtn: TextView
+    private lateinit var stopBtn: TextView
+    private lateinit var languageSpinner: Spinner
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,45 +57,74 @@ class MainActivity : AppCompatActivity() {
             setPadding(padding, padding, padding, padding)
         }
 
-        // Title
         root.addView(TextView(this).apply {
             text = "Know Your Phone"
-            textSize = 28f
-            setTextColor(0xFF212121.toInt())
-            setPadding(0, dp(16), 0, dp(8))
+            textSize = 24f
+            setTextColor(0xFF111111.toInt())
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, dp(12), 0, dp(6))
         })
 
-        // Subtitle
         root.addView(TextView(this).apply {
-            text = "AI-powered voice assistant that helps you understand your screen."
+            text = "Voice-first assistant for screen help."
             textSize = 14f
-            setTextColor(0xFF757575.toInt())
-            setPadding(0, 0, 0, dp(24))
+            setTextColor(0xFF666666.toInt())
+            setPadding(0, 0, 0, dp(20))
         })
 
-        // Permissions section title
-        root.addView(TextView(this).apply {
-            text = "Setup Checklist"
-            textSize = 18f
-            setTextColor(0xFF424242.toInt())
+        // Language selector
+        val languageLabel = TextView(this).apply {
+            text = "Language"
+            textSize = 13f
+            setTextColor(0xFF666666.toInt())
+            setPadding(0, 0, 0, dp(6))
+        }
+        root.addView(languageLabel)
+
+        languageSpinner = Spinner(this)
+        val languages = listOf(
+            LanguageOption("English", "en"),
+            LanguageOption("Tamil", "ta"),
+            LanguageOption("Hindi", "hi"),
+            LanguageOption("Kannada", "kn"),
+            LanguageOption("Telugu", "te")
+        )
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            languages.map { it.label }
+        )
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        languageSpinner.adapter = adapter
+        languageSpinner.background = GradientDrawable().apply {
+            cornerRadius = dp(10).toFloat()
+            setStroke(dp(1), 0x22000000)
+            setColor(Color.TRANSPARENT)
+        }
+        root.addView(languageSpinner, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(16) })
+
+        // Permissions (only show missing)
+        permissionsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, dp(16))
-        })
+        }
 
-        // 1. Microphone
-        val micRow = makePermissionRow("Microphone Permission")
-        micStatus = micRow.first
-        micBtn = micRow.third
+        val mic = makePermissionRow("Microphone")
+        micRow = mic.first
+        micBtn = mic.second
         micBtn.setOnClickListener {
             ActivityCompat.requestPermissions(
                 this, arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MIC
             )
         }
-        root.addView(micRow.second)
+        permissionsContainer.addView(micRow)
 
-        // 2. Overlay
-        val overlayRow = makePermissionRow("Display Over Other Apps")
-        overlayStatus = overlayRow.first
-        overlayBtn = overlayRow.third
+        val overlay = makePermissionRow("Overlay")
+        overlayRow = overlay.first
+        overlayBtn = overlay.second
         overlayBtn.setOnClickListener {
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -97,104 +132,79 @@ class MainActivity : AppCompatActivity() {
             )
             startActivity(intent)
         }
-        root.addView(overlayRow.second)
+        permissionsContainer.addView(overlayRow)
 
-        // 3. Accessibility
-        val accessRow = makePermissionRow("Accessibility Service")
-        accessibilityStatus = accessRow.first
-        accessibilityBtn = accessRow.third
+        val access = makePermissionRow("Accessibility")
+        accessibilityRow = access.first
+        accessibilityBtn = access.second
         accessibilityBtn.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
-        root.addView(accessRow.second)
+        permissionsContainer.addView(accessibilityRow)
 
-        // Server URL input
-        root.addView(TextView(this).apply {
-            text = "Server URL"
-            textSize = 14f
-            setTextColor(0xFF424242.toInt())
-            setPadding(0, dp(24), 0, dp(4))
-        })
+        root.addView(permissionsContainer)
 
-        val prefs = getSharedPreferences("kyp_prefs", MODE_PRIVATE)
-        val savedUrl = prefs.getString("server_url", "ws://localhost:8765") ?: "ws://localhost:8765"
-
-        serverUrlInput = EditText(this).apply {
-            setText(savedUrl)
-            textSize = 14f
-            isSingleLine = true
-            hint = "ws://ip:port"
+        // Start / Reset button
+        startResetBtn = makePrimaryButton("Start / Reset Session").apply {
+            setOnClickListener { onStartOrResetClicked() }
         }
-        root.addView(serverUrlInput)
-
-        // Start button
-        startBtn = Button(this).apply {
-            text = "Start Assistant"
-            textSize = 16f
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            setOnClickListener { onStartClicked() }
-        }
-        val startParams = LinearLayout.LayoutParams(
+        root.addView(startResetBtn, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(24) }
-        root.addView(startBtn, startParams)
+        ).apply { topMargin = dp(12) })
 
         // Stop button
-        val stopBtn = Button(this).apply {
-            text = "Stop Assistant"
-            textSize = 14f
+        stopBtn = makeSecondaryButton("Stop Agent").apply {
             setOnClickListener {
                 OverlayService.stop(this@MainActivity)
-                Toast.makeText(this@MainActivity, "Assistant stopped", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "Agent stopped", Toast.LENGTH_SHORT).show()
             }
         }
-        val stopParams = LinearLayout.LayoutParams(
+        root.addView(stopBtn, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(8) }
-        root.addView(stopBtn, stopParams)
+        ).apply { topMargin = dp(8) })
+
+        // Set selection + listener
+        val prefs = getSharedPreferences("kyp_prefs", MODE_PRIVATE)
+        val savedLang = prefs.getString("language_code", "en") ?: "en"
+        val index = languages.indexOfFirst { it.code == savedLang }.let { if (it >= 0) it else 0 }
+        languageSpinner.setSelection(index, false)
+        languageSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>, view: android.view.View?, position: Int, id: Long) {
+                val code = languages[position].code
+                prefs.edit().putString("language_code", code).apply()
+                OverlayService.instance?.setLanguage(code)
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>) {
+                // no-op
+            }
+        }
 
         setContentView(root)
     }
 
-    private fun makePermissionRow(label: String): Triple<ImageView, LinearLayout, Button> {
+    private fun makePermissionRow(label: String): Pair<LinearLayout, TextView> {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(6), 0, dp(6))
-        }
-
-        val statusIcon = ImageView(this).apply {
-            setImageResource(android.R.drawable.presence_busy)
-            layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply {
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                marginEnd = dp(12)
-            }
         }
 
         val labelView = TextView(this).apply {
             text = label
             textSize = 15f
-            setTextColor(0xFF333333.toInt())
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                gravity = android.view.Gravity.CENTER_VERTICAL
-            }
+            setTextColor(0xFF222222.toInt())
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
-        val button = Button(this).apply {
-            text = "Grant"
-            textSize = 12f
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
+        val button = makeTextButton("Enable")
 
-        row.addView(statusIcon)
         row.addView(labelView)
         row.addView(button)
 
-        return Triple(statusIcon, row, button)
+        return Pair(row, button)
     }
 
     private fun updatePermissionStatus() {
@@ -203,23 +213,15 @@ class MainActivity : AppCompatActivity() {
         val hasOverlay = Settings.canDrawOverlays(this)
         val hasAccessibility = isAccessibilityServiceEnabled()
 
-        micStatus.setImageResource(
-            if (hasMic) android.R.drawable.presence_online else android.R.drawable.presence_busy
-        )
-        overlayStatus.setImageResource(
-            if (hasOverlay) android.R.drawable.presence_online else android.R.drawable.presence_busy
-        )
-        accessibilityStatus.setImageResource(
-            if (hasAccessibility) android.R.drawable.presence_online else android.R.drawable.presence_busy
-        )
-
-        micBtn.isEnabled = !hasMic
-        overlayBtn.isEnabled = !hasOverlay
-        accessibilityBtn.isEnabled = !hasAccessibility
+        micRow.visibility = if (hasMic) android.view.View.GONE else android.view.View.VISIBLE
+        overlayRow.visibility = if (hasOverlay) android.view.View.GONE else android.view.View.VISIBLE
+        accessibilityRow.visibility = if (hasAccessibility) android.view.View.GONE else android.view.View.VISIBLE
 
         val allGranted = hasMic && hasOverlay && hasAccessibility
-        startBtn.isEnabled = allGranted
-        startBtn.alpha = if (allGranted) 1f else 0.5f
+        startResetBtn.isEnabled = allGranted
+        startResetBtn.alpha = if (allGranted) 1f else 0.4f
+
+        permissionsContainer.visibility = if (allGranted) android.view.View.GONE else android.view.View.VISIBLE
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -233,23 +235,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun onStartClicked() {
-        // Save server URL
-        val url = serverUrlInput.text.toString().trim()
-        if (url.isBlank()) {
-            Toast.makeText(this, "Please enter a server URL", Toast.LENGTH_SHORT).show()
+    private fun onStartOrResetClicked() {
+        val hasMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        val hasOverlay = Settings.canDrawOverlays(this)
+        val hasAccessibility = isAccessibilityServiceEnabled()
+
+        if (!hasMic || !hasOverlay || !hasAccessibility) {
+            Toast.makeText(this, "Grant required permissions first", Toast.LENGTH_SHORT).show()
             return
         }
-        getSharedPreferences("kyp_prefs", MODE_PRIVATE)
-            .edit()
-            .putString("server_url", url)
-            .apply()
 
-        // Start overlay service
-        OverlayService.start(this)
-        Toast.makeText(this, "Assistant started! Look for the floating dot.", Toast.LENGTH_LONG).show()
+        if (OverlayService.instance == null) {
+            OverlayService.start(this)
+            Toast.makeText(this, "Agent started. Look for the orb.", Toast.LENGTH_SHORT).show()
+        } else {
+            OverlayService.instance?.resetSession()
+            Toast.makeText(this, "Session reset", Toast.LENGTH_SHORT).show()
+        }
 
-        // Minimize the activity
         moveTaskToBack(true)
     }
 
@@ -263,4 +267,49 @@ class MainActivity : AppCompatActivity() {
     private fun dp(value: Int): Int {
         return (value * resources.displayMetrics.density).toInt()
     }
+
+    private fun makePrimaryButton(label: String): TextView {
+        return TextView(this).apply {
+            text = label
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(12).toFloat()
+                setColor(0xFF111111.toInt())
+            }
+        }
+    }
+
+    private fun makeSecondaryButton(label: String): TextView {
+        return TextView(this).apply {
+            text = label
+            textSize = 14f
+            setTextColor(0xFF222222.toInt())
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(12).toFloat()
+                setStroke(dp(1), 0x22000000)
+                setColor(Color.TRANSPARENT)
+            }
+        }
+    }
+
+    private fun makeTextButton(label: String): TextView {
+        return TextView(this).apply {
+            text = label
+            textSize = 13f
+            setTextColor(0xFF222222.toInt())
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setStroke(dp(1), 0x22000000)
+                setColor(Color.TRANSPARENT)
+            }
+        }
+    }
+
+    private data class LanguageOption(val label: String, val code: String)
 }

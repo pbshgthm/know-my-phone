@@ -19,6 +19,20 @@ export interface AudioDataMessage {
   sampleRate: number;
 }
 
+export interface HelloMessage {
+  type: "hello";
+  clientId: string;
+}
+
+export interface ResetSessionMessage {
+  type: "reset_session";
+}
+
+export interface SetLanguageMessage {
+  type: "set_language";
+  languageCode: string;
+}
+
 export interface ScreenshotResponseMessage {
   type: "screenshot_response";
   screenshot: string; // base64
@@ -35,6 +49,9 @@ export interface CancelMessage {
 
 export type ClientMessage =
   | AudioDataMessage
+  | HelloMessage
+  | ResetSessionMessage
+  | SetLanguageMessage
   | ScreenshotResponseMessage
   | ScreenshotDeclinedMessage
   | CancelMessage;
@@ -51,11 +68,25 @@ export interface NeedScreenshotMessage {
   reason: string;
 }
 
+export interface ScreenshotRequestMessage {
+  type: "screenshot_request";
+  text: string;
+  reason: string;
+  hasAudio: boolean;
+}
+
 export interface AnswerMessage {
   type: "answer";
   text: string;
   highlights: Highlight[];
   hasAudio: boolean;
+}
+
+export interface SessionStatusMessage {
+  type: "session_status";
+  sessionId: string;
+  userCount: number;
+  assistantCount: number;
 }
 
 export interface ErrorMessage {
@@ -70,7 +101,9 @@ export interface CancelledMessage {
 export type ServerMessage =
   | TranscriptMessage
   | NeedScreenshotMessage
+  | ScreenshotRequestMessage
   | AnswerMessage
+  | SessionStatusMessage
   | ErrorMessage
   | CancelledMessage;
 
@@ -104,6 +137,7 @@ export interface UiTree {
 export interface TriageResult {
   needsScreenshot: boolean;
   reason: string;
+  requestSpeech: string;
 }
 
 // Visual analysis result from LLM

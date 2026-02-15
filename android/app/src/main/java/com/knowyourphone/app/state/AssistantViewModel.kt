@@ -15,6 +15,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.ByteArrayOutputStream
+import java.util.UUID
 
 class AssistantViewModel(
     private val context: Context,
@@ -22,6 +23,7 @@ class AssistantViewModel(
 ) {
     companion object {
         private const val TAG = "AssistantVM"
+        private const val SCREENSHOT_DELAY_MS = 350L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -45,8 +47,14 @@ class AssistantViewModel(
     private val _reconnecting = MutableStateFlow(false)
     val reconnecting: StateFlow<Boolean> = _reconnecting
 
+    private val _messageCounts = MutableStateFlow(MessageCounts(0, 0))
+    val messageCounts: StateFlow<MessageCounts> = _messageCounts
+
     private val audioRecorder = AudioRecorder()
     private val audioPlayer = AudioPlayer(context)
+
+    private val clientId: String = getOrCreateClientId()
+    private var languageCode: String = getPreferredLanguageCode()
 
     // The binary frame we expect after an "answer" text frame
     // Both fields set synchronously on OkHttp reader thread to avoid race with binary frame
@@ -54,8 +62,10 @@ class AssistantViewModel(
     private var expectingMp3Binary = false
     @Volatile
     private var pendingHighlights: List<HighlightTarget> = emptyList()
+    @Volatile
+    private var pendingScreenshotRequest = false
 
-    private val wsClient = WsClient(
+    private val wsClient: WsClient = WsClient(
         onMessage = { text -> handleServerMessage(text) },
         onBinaryMessage = { data -> handleBinaryMessage(data) },
         onConnected = {
@@ -65,6 +75,9 @@ class AssistantViewModel(
             if (wasReconnecting) {
                 _errorMessage.value = "Connected"
             }
+            // Bind session to a stable clientId
+            sendHello()
+            sendLanguage()
             Log.d(TAG, "Connected to server")
         },
         onDisconnected = {
@@ -88,6 +101,14 @@ class AssistantViewModel(
 
     private var highlightDismissJob: Job? = null
 
+    private fun sendHello() {
+        wsClient.sendText(MessageParser.toJson(HelloMessage(clientId = clientId)))
+    }
+
+    private fun sendLanguage() {
+        wsClient.sendText(MessageParser.toJson(SetLanguageMessage(languageCode = languageCode)))
+    }
+
     fun connect() {
         wsClient.connect(serverUrl)
     }
@@ -98,42 +119,54 @@ class AssistantViewModel(
     }
 
     /**
-     * Called when user taps the dot.
+     * Press-and-hold start.
      * IDLE -> start listening
-     * LISTENING -> stop listening and send audio
-     * THINKING -> cancel current request, start listening
-     * SPEAKING -> stop playback, cancel backend, start listening
-     * NEED_SCREENSHOT -> decline screenshot, start listening
-     * HIGHLIGHTING -> dismiss highlights, go idle
+     * THINKING/SPEAKING/NEED_SCREENSHOT/HIGHLIGHTING -> cancel and start listening
      */
-    fun onDotTap() {
+    fun onPressStart() {
         when (_state.value) {
             AssistantState.IDLE -> startListening()
-            AssistantState.LISTENING -> stopListeningAndSend()
+            AssistantState.LISTENING -> { /* already listening */ }
             AssistantState.THINKING -> {
-                // Cancel current request and start new recording
                 sendCancel()
                 expectingMp3Binary = false
                 startListening()
             }
             AssistantState.SPEAKING -> {
-                // Stop audio, cancel any remaining backend work, start new recording
                 audioPlayer.stop()
                 sendCancel()
                 expectingMp3Binary = false
                 startListening()
             }
             AssistantState.NEED_SCREENSHOT -> {
-                // Decline screenshot and start new recording
-                sendCancel()
+                onScreenshotDecline()
                 startListening()
             }
             AssistantState.HIGHLIGHTING -> {
                 _highlights.value = emptyList()
                 highlightDismissJob?.cancel()
-                _state.value = AssistantState.IDLE
+                startListening()
             }
         }
+    }
+
+    /**
+     * Release press.
+     * LISTENING -> stop and send audio
+     */
+    fun onPressEnd() {
+        if (_state.value == AssistantState.LISTENING) {
+            stopListeningAndSend()
+        }
+    }
+
+    /**
+     * Cancel recording without sending (e.g., drag).
+     */
+    fun cancelRecordingIfListening() {
+        if (_state.value != AssistantState.LISTENING) return
+        audioRecorder.cancelRecording()
+        _state.value = AssistantState.IDLE
     }
 
     private fun sendCancel() {
@@ -203,6 +236,7 @@ class AssistantViewModel(
         if (message is ServerMessage.Answer) {
             Log.d(TAG, "Answer: ${message.text}, highlights: ${message.highlights.size}, hasAudio: ${message.hasAudio}")
             pendingHighlights = message.highlights
+            pendingScreenshotRequest = false
             if (message.hasAudio) {
                 expectingMp3Binary = true
                 Log.d(TAG, "Set expectingMp3Binary=true, waiting for audio binary")
@@ -224,6 +258,23 @@ class AssistantViewModel(
             return
         }
 
+        if (message is ServerMessage.ScreenshotRequest) {
+            Log.d(TAG, "Screenshot request: ${message.reason}, hasAudio=${message.hasAudio}")
+            _screenshotReason.value = message.reason
+            pendingHighlights = emptyList()
+            pendingScreenshotRequest = true
+            if (message.hasAudio) {
+                expectingMp3Binary = true
+                Log.d(TAG, "Set expectingMp3Binary=true for screenshot request")
+            } else {
+                expectingMp3Binary = false
+                scope.launch(Dispatchers.Main) {
+                    _state.value = AssistantState.NEED_SCREENSHOT
+                }
+            }
+            return
+        }
+
         scope.launch(Dispatchers.Main) {
             when (message) {
                 is ServerMessage.Transcript -> {
@@ -238,6 +289,14 @@ class AssistantViewModel(
                 }
 
                 is ServerMessage.Answer -> { /* handled above */ }
+                is ServerMessage.ScreenshotRequest -> { /* handled above */ }
+
+                is ServerMessage.SessionStatus -> {
+                    _messageCounts.value = MessageCounts(
+                        userCount = message.userCount,
+                        assistantCount = message.assistantCount
+                    )
+                }
 
                 is ServerMessage.Error -> {
                     Log.e(TAG, "Server error: ${message.message}")
@@ -247,7 +306,7 @@ class AssistantViewModel(
 
                 is ServerMessage.Cancelled -> {
                     Log.d(TAG, "Server acknowledged cancellation")
-                    // State already updated by onDotTap, nothing to do
+                    // State already updated by press handlers, nothing to do
                 }
             }
         }
@@ -263,7 +322,10 @@ class AssistantViewModel(
                 audioPlayer.playMp3Bytes(data) {
                     // Playback complete
                     scope.launch(Dispatchers.Main) {
-                        if (pendingHighlights.isNotEmpty()) {
+                        if (pendingScreenshotRequest) {
+                            pendingScreenshotRequest = false
+                            _state.value = AssistantState.NEED_SCREENSHOT
+                        } else if (pendingHighlights.isNotEmpty()) {
                             _highlights.value = pendingHighlights
                             _state.value = AssistantState.HIGHLIGHTING
                             scheduleHighlightDismiss()
@@ -298,37 +360,41 @@ class AssistantViewModel(
             return
         }
 
-        // Collect UI tree
-        val uiTree = accessibility.collectUiTree()
+        scope.launch(Dispatchers.Main) {
+            delay(SCREENSHOT_DELAY_MS)
 
-        // Capture screenshot
-        accessibility.captureScreenshot { bitmap ->
-            scope.launch(Dispatchers.IO) {
-                if (bitmap == null || uiTree == null) {
-                    Log.e(TAG, "Failed to capture screenshot or UI tree")
-                    withContext(Dispatchers.Main) { _state.value = AssistantState.IDLE }
-                    return@launch
-                }
+            // Collect UI tree
+            val uiTree = accessibility.collectUiTree()
 
-                // Encode bitmap to JPEG base64
-                val baos = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 70, baos)
-                bitmap.recycle()
-                val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+            // Capture screenshot
+            accessibility.captureScreenshot { bitmap ->
+                scope.launch(Dispatchers.IO) io@{
+                    if (bitmap == null || uiTree == null) {
+                        Log.e(TAG, "Failed to capture screenshot or UI tree")
+                        withContext(Dispatchers.Main) { _state.value = AssistantState.IDLE }
+                        return@io
+                    }
 
-                // Convert UI tree to JsonObject
-                val uiTreeJson = gson.toJsonTree(uiTree).asJsonObject
+                    // Encode bitmap to JPEG base64
+                    val baos = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 70, baos)
+                    bitmap.recycle()
+                    val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
 
-                val msg = ScreenshotResponseMessage(
-                    screenshot = base64,
-                    uiTree = uiTreeJson
-                )
-                val sent = wsClient.sendText(MessageParser.toJson(msg))
-                if (!sent) {
-                    Log.e(TAG, "Failed to send screenshot response")
-                    withContext(Dispatchers.Main) { _state.value = AssistantState.IDLE }
-                } else {
-                    Log.d(TAG, "Sent screenshot response")
+                    // Convert UI tree to JsonObject
+                    val uiTreeJson = gson.toJsonTree(uiTree).asJsonObject
+
+                    val msg = ScreenshotResponseMessage(
+                        screenshot = base64,
+                        uiTree = uiTreeJson
+                    )
+                    val sent = wsClient.sendText(MessageParser.toJson(msg))
+                    if (!sent) {
+                        Log.e(TAG, "Failed to send screenshot response")
+                        withContext(Dispatchers.Main) { _state.value = AssistantState.IDLE }
+                    } else {
+                        Log.d(TAG, "Sent screenshot response")
+                    }
                 }
             }
         }
@@ -344,6 +410,37 @@ class AssistantViewModel(
         if (!sent) {
             _state.value = AssistantState.IDLE
         }
+    }
+
+    fun resetSession() {
+        sendCancel()
+        wsClient.sendText(MessageParser.toJson(ResetSessionMessage()))
+        sendLanguage()
+        expectingMp3Binary = false
+        pendingScreenshotRequest = false
+        pendingHighlights = emptyList()
+        _messageCounts.value = MessageCounts(0, 0)
+        _highlights.value = emptyList()
+        _state.value = AssistantState.IDLE
+    }
+
+    fun setLanguage(code: String) {
+        languageCode = code
+        sendLanguage()
+    }
+
+    private fun getOrCreateClientId(): String {
+        val prefs = context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
+        val existing = prefs.getString("client_id", null)
+        if (!existing.isNullOrBlank()) return existing
+        val newId = UUID.randomUUID().toString()
+        prefs.edit().putString("client_id", newId).apply()
+        return newId
+    }
+
+    private fun getPreferredLanguageCode(): String {
+        val prefs = context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("language_code", "en") ?: "en"
     }
 
     fun clearError() {

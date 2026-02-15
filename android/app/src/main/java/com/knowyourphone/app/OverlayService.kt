@@ -90,6 +90,14 @@ class OverlayService : Service() {
         Log.d(TAG, "Overlay service destroyed")
     }
 
+    fun resetSession() {
+        viewModel.resetSession()
+    }
+
+    fun setLanguage(languageCode: String) {
+        viewModel.setLanguage(languageCode)
+    }
+
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
@@ -136,14 +144,14 @@ class OverlayService : Service() {
             y = dp(200)
         }
 
-        // Make dot draggable
+        // Make dot draggable + press-and-hold to talk
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
         var isDragging = false
 
-        dotView?.setOnTouchListener { v, event ->
+        dotView?.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = params.x
@@ -151,6 +159,7 @@ class OverlayService : Service() {
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isDragging = false
+                    viewModel.onPressStart()
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -158,6 +167,7 @@ class OverlayService : Service() {
                     val dy = event.rawY - initialTouchY
                     if (!isDragging && (dx * dx + dy * dy > 100)) {
                         isDragging = true
+                        viewModel.cancelRecordingIfListening()
                     }
                     if (isDragging) {
                         params.x = initialX + dx.toInt()
@@ -168,7 +178,13 @@ class OverlayService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isDragging) {
-                        viewModel.onDotTap()
+                        viewModel.onPressEnd()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    if (!isDragging) {
+                        viewModel.onPressEnd()
                     }
                     true
                 }
@@ -213,12 +229,11 @@ class OverlayService : Service() {
 
     // --- Confirm pill ---
 
-    private fun showConfirmPill(reason: String) {
+    private fun showConfirmPill() {
         removeConfirmPill()
 
         confirmPillView = ConfirmPillView(
             context = this,
-            reason = reason,
             onConfirm = {
                 removeConfirmPill()
                 viewModel.onScreenshotConfirm()
@@ -258,7 +273,7 @@ class OverlayService : Service() {
 
                 when (state) {
                     AssistantState.NEED_SCREENSHOT -> {
-                        showConfirmPill(viewModel.screenshotReason.value)
+                        showConfirmPill()
                     }
                     AssistantState.HIGHLIGHTING -> {
                         // Show highlight overlay
@@ -267,6 +282,12 @@ class OverlayService : Service() {
                         removeConfirmPill()
                     }
                 }
+            }
+        }
+
+        scope.launch {
+            viewModel.messageCounts.collect { counts ->
+                dotView?.setMessageCounts(counts.userCount, counts.assistantCount)
             }
         }
 

@@ -83,5 +83,18 @@ class AudioRecorder {
         return data
     }
 
+    fun cancelRecording() {
+        isRecording = false
+        recordingJob?.cancel()
+        recordingJob = null
+
+        audioRecord?.stop()
+        audioRecord?.release()
+        audioRecord = null
+
+        pcmBuffer.reset()
+        Log.d(TAG, "Recording cancelled")
+    }
+
     fun isCurrentlyRecording(): Boolean = isRecording
 }
