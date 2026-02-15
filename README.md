@@ -1,4 +1,4 @@
-# Know Your Phone - Android Voice Assistant
+# Know My Phone - Android Voice Assistant
 
 A hackathon prototype that helps users understand what's on their Android screen using AI-powered voice assistance. The app shows a floating pill overlay, listens to voice questions, and provides spoken answers with visual highlights on UI elements.
 
@@ -213,7 +213,7 @@ The default LLM model is `anthropic/claude-4.5-haiku`, configurable via `LLM_TEX
 ## Project Structure
 
 ```
-know-your-phone/
+know-my-phone/
 ├── ARCHITECTURE.md          # Detailed architecture doc
 ├── README.md                # This file
 ├── backend/
@@ -232,7 +232,7 @@ know-your-phone/
 └── android/
     └── app/src/main/
         ├── AndroidManifest.xml
-        └── java/com/knowyourphone/app/
+        └── java/com/knowmyphone/app/
             ├── MainActivity.kt
             ├── OverlayService.kt
             ├── KypAccessibilityService.kt
@@ -259,7 +259,7 @@ npm run dev  # tsx watch mode
 
 ### Logs
 - Backend: Console output with session IDs
-- Android: Logcat filtered by `KnowYourPhone` or specific tags
+- Android: Logcat filtered by `KnowMyPhone` or specific tags
 
 ## License
 

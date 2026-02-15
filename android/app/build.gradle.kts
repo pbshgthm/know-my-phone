@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.knowyourphone.app"
+    namespace = "com.knowmyphone.app"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.knowyourphone.app"
+        applicationId = "com.knowmyphone.app"
         minSdk = 30
         targetSdk = 34
         versionCode = 1

@@ -1,6 +1,6 @@
 # Keep data classes used with Gson
--keepclassmembers class com.knowyourphone.app.model.** { *; }
--keepclassmembers class com.knowyourphone.app.network.** { *; }
+-keepclassmembers class com.knowmyphone.app.model.** { *; }
+-keepclassmembers class com.knowmyphone.app.network.** { *; }
 
 # OkHttp
 -dontwarn okhttp3.**

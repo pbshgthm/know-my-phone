@@ -50,7 +50,7 @@ wss.on("connection", (ws) => {
 
 server.listen(PORT, () => {
   console.log('\n' + '='.repeat(60));
-  console.log(`🚀 Know Your Phone Backend Server`);
+  console.log(`🚀 Know My Phone Backend Server`);
   console.log('='.repeat(60));
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`🌐 Web UI:    http://localhost:${PORT}/`);

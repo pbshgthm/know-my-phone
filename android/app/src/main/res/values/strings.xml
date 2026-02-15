@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Know Your Phone</string>
-    <string name="accessibility_service_description">Know Your Phone reads the screen layout to help you understand what\'s on your screen and guide you to the next action. No data is collected without your permission.</string>
+    <string name="app_name">Know My Phone</string>
+    <string name="accessibility_service_description">Know My Phone reads the screen layout to help you understand what\'s on your screen and guide you to the next action. No data is collected without your permission.</string>
 </resources>

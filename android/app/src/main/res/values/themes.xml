@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.KnowYourPhone" parent="Theme.Material3.Light.NoActionBar">
+    <style name="Theme.KnowMyPhone" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">#1A1A2E</item>
         <item name="colorPrimaryVariant">#16213E</item>
         <item name="colorOnPrimary">#FFFFFF</item>
@@ -13,7 +13,7 @@
     </style>
 
     <!-- Transparent launcher theme: no window preview, no flash -->
-    <style name="Theme.KnowYourPhone.Launcher" parent="Theme.KnowYourPhone">
+    <style name="Theme.KnowMyPhone.Launcher" parent="Theme.KnowMyPhone">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>

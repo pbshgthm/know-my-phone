@@ -63,7 +63,7 @@ An Android voice assistant that helps users understand what's on their screen an
 ## Project Structure
 
 ```
-know-your-phone/
+know-my-phone/
 ├── DESCRIPTION.md
 ├── ARCHITECTURE.md
 ├── backend/
@@ -84,7 +84,7 @@ know-your-phone/
     └── app/src/main/
         ├── AndroidManifest.xml
         ├── res/xml/accessibility_service_config.xml
-        └── java/com/knowyourphone/app/
+        └── java/com/knowmyphone/app/
             ├── MainActivity.kt               # Onboarding + permissions
             ├── KypAccessibilityService.kt     # UI tree + screenshot capture
             ├── OverlayService.kt              # Foreground service: dot + highlights

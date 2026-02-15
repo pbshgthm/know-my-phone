@@ -14,10 +14,10 @@
         "closeApp": "Close"
       },
       "app": {
-        "title": "Know Your Phone",
+        "title": "Know My Phone",
         "subtitle": "Settings",
         "permissions": "Required permissions",
-        "permissionsHelp": "To guide you on any app screen, Know Your Phone needs these three permissions.",
+        "permissionsHelp": "To guide you on any app screen, Know My Phone needs these three permissions.",
         "micLabel": "Microphone",
         "micSubtitle": "Lets you ask questions by voice",
         "overlayLabel": "Overlay",
@@ -57,10 +57,10 @@
         "closeApp": "बंद करें"
       },
       "app": {
-        "title": "Know Your Phone",
+        "title": "Know My Phone",
         "subtitle": "सेटिंग्स",
         "permissions": "ज़रूरी परमिशन",
-        "permissionsHelp": "किसी भी ऐप में सही मदद देने के लिए Know Your Phone को ये 3 परमिशन चाहिए।",
+        "permissionsHelp": "किसी भी ऐप में सही मदद देने के लिए Know My Phone को ये 3 परमिशन चाहिए।",
         "micLabel": "माइक्रोफ़ोन",
         "micSubtitle": "आवाज़ में सवाल पूछने के लिए",
         "overlayLabel": "Display over apps",
@@ -100,10 +100,10 @@
         "closeApp": "மூடு"
       },
       "app": {
-        "title": "Know Your Phone",
+        "title": "Know My Phone",
         "subtitle": "அமைப்புகள்",
         "permissions": "தேவையான அனுமதிகள்",
-        "permissionsHelp": "எந்த ஆப்பிலும் சரியாக வழிகாட்ட Know Your Phone-க்கு இந்த 3 அனுமதிகள் தேவை.",
+        "permissionsHelp": "எந்த ஆப்பிலும் சரியாக வழிகாட்ட Know My Phone-க்கு இந்த 3 அனுமதிகள் தேவை.",
         "micLabel": "மைக்ரோஃபோன்",
         "micSubtitle": "குரலில் கேள்வி கேட்க",
         "overlayLabel": "Display over apps",
@@ -143,10 +143,10 @@
         "closeApp": "ಮುಚ್ಚಿ"
       },
       "app": {
-        "title": "Know Your Phone",
+        "title": "Know My Phone",
         "subtitle": "ಸೆಟ್ಟಿಂಗ್ಸ್",
         "permissions": "ಬೇಕಾದ ಅನುಮತಿಗಳು",
-        "permissionsHelp": "ಯಾವುದೇ ಆಪ್‌ನಲ್ಲಿ ಸರಿಯಾಗಿ ಮಾರ್ಗದರ್ಶನ ನೀಡಲು Know Your Phone ಗೆ ಈ 3 ಅನುಮತಿಗಳು ಬೇಕು.",
+        "permissionsHelp": "ಯಾವುದೇ ಆಪ್‌ನಲ್ಲಿ ಸರಿಯಾಗಿ ಮಾರ್ಗದರ್ಶನ ನೀಡಲು Know My Phone ಗೆ ಈ 3 ಅನುಮತಿಗಳು ಬೇಕು.",
         "micLabel": "ಮೈಕ್ರೋಫೋನ್",
         "micSubtitle": "ಧ್ವನಿಯಲ್ಲಿ ಪ್ರಶ್ನೆ ಕೇಳಲು",
         "overlayLabel": "Display over apps",
@@ -186,10 +186,10 @@
         "closeApp": "మూసివేయి"
       },
       "app": {
-        "title": "Know Your Phone",
+        "title": "Know My Phone",
         "subtitle": "సెట్టింగ్స్",
         "permissions": "అవసరమైన అనుమతులు",
-        "permissionsHelp": "ఏ యాప్‌లోనైనా సరైన మార్గదర్శనం ఇవ్వడానికి Know Your Phone కి ఈ 3 అనుమతులు అవసరం.",
+        "permissionsHelp": "ఏ యాప్‌లోనైనా సరైన మార్గదర్శనం ఇవ్వడానికి Know My Phone కి ఈ 3 అనుమతులు అవసరం.",
         "micLabel": "మైక్రోఫోన్",
         "micSubtitle": "వాయిస్‌లో ప్రశ్నలు అడగడానికి",
         "overlayLabel": "Display over apps",
@@ -229,10 +229,10 @@
         "closeApp": "അടയ്ക്കുക"
       },
       "app": {
-        "title": "Know Your Phone",
+        "title": "Know My Phone",
         "subtitle": "സെറ്റിംഗ്സ്",
         "permissions": "ആവശ്യമായ അനുമതികൾ",
-        "permissionsHelp": "ഏത് ആപ്പിലും ശരിയായി വഴികാട്ടാൻ Know Your Phone-ന് ഈ 3 അനുമതികൾ വേണം.",
+        "permissionsHelp": "ഏത് ആപ്പിലും ശരിയായി വഴികാട്ടാൻ Know My Phone-ന് ഈ 3 അനുമതികൾ വേണം.",
         "micLabel": "മൈക്രോഫോൺ",
         "micSubtitle": "ശബ്ദത്തിൽ ചോദിക്കാൻ",
         "overlayLabel": "Display over apps",
