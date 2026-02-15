@@ -92,7 +92,9 @@ class KypAccessibilityService : AccessibilityService() {
                         focused = if (node.isFocused) true else null,
                         scrollable = if (node.isScrollable) true else null,
                         depth = depth,
-                        childCount = node.childCount
+                        childCount = node.childCount,
+                        inputType = node.inputType.takeIf { it != 0 },
+                        isPassword = if (node.isPassword) true else null
                     )
                 )
             }

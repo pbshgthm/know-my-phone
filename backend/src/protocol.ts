@@ -43,12 +43,24 @@ export interface RedactionInfo {
   nodeIds: string[];
 }
 
+export interface VisualRedactionInfo {
+  type: string;       // e.g. "FACE", "QR_CODE", "UPI_ID"
+  label: string;      // human-readable label
+  bounds: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  };
+}
+
 export interface ScreenshotResponseMessage {
   type: "screenshot_response";
   screenshot: string; // base64
   uiTree: UiTree;
   redacted?: boolean;
   redactions?: RedactionInfo[];
+  visualRedactions?: VisualRedactionInfo[];
 }
 
 export interface ScreenshotDeclinedMessage {

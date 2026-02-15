@@ -15,7 +15,8 @@ import com.knowyourphone.app.i18n.LanguageManager
 import kotlinx.coroutines.channels.Channel
 import com.knowyourphone.app.model.HighlightTarget
 import com.knowyourphone.app.network.*
-import com.knowyourphone.app.privacy.PiiRedactor
+import com.knowyourphone.app.privacy.VisualRedaction
+import com.knowyourphone.app.privacy.PiiRedactionEngine
 import com.knowyourphone.app.util.WavEncoder
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -532,20 +533,16 @@ class AssistantViewModel(
                         return@io
                     }
 
-                    // Redact PII from UI tree
-                    val redactionResult = PiiRedactor.redactUiTree(uiTree)
-                    val hasPii = redactionResult.nodeRedactions.isNotEmpty()
+                    // Redact PII: text layers (metadata + regex) + visual (faces, QR, OCR)
+                    val redactionResult = PiiRedactionEngine.redact(bitmap, uiTree)
+                    val hasPii = redactionResult.hasPii
                     if (hasPii) {
                         Log.d(TAG, "PII redacted: ${redactionResult.summaries.size} types found")
                     }
 
-                    // Redact PII regions on bitmap if needed
-                    val finalBitmap = if (hasPii) {
-                        val redacted = PiiRedactor.redactBitmap(bitmap, redactionResult.nodeRedactions)
+                    val finalBitmap = redactionResult.redactedBitmap
+                    if (finalBitmap !== bitmap) {
                         bitmap.recycle()
-                        redacted
-                    } else {
-                        bitmap
                     }
 
                     // Encode bitmap to JPEG base64
@@ -557,11 +554,25 @@ class AssistantViewModel(
                     // Convert redacted UI tree to JsonObject
                     val uiTreeJson = gson.toJsonTree(redactionResult.redactedSnapshot).asJsonObject
 
+
+                    val visualRedactionInfos = redactionResult.visualRedactions.map { vr ->
+                        ScreenRedactionInfo(
+                            type = vr.type,
+                            label = vr.label,
+                            bounds = mapOf(
+                                "left" to vr.bounds.left,
+                                "top" to vr.bounds.top,
+                                "right" to vr.bounds.right,
+                                "bottom" to vr.bounds.bottom
+                            )
+                        )
+                    }
                     val msg = ScreenshotResponseMessage(
                         screenshot = base64,
                         uiTree = uiTreeJson,
                         redacted = hasPii,
-                        redactions = if (hasPii) redactionResult.summaries else emptyList()
+                        redactions = if (hasPii) redactionResult.summaries else emptyList(),
+                        visualRedactions = visualRedactionInfos
                     )
                     val sent = wsClient.sendText(MessageParser.toJson(msg))
                     if (!sent) {

@@ -61,13 +61,17 @@ class StreamingAudioPlayer {
      */
     fun writeChunk(pcmData: ByteArray) {
         val track = audioTrack ?: return
-        val written = track.write(pcmData, 0, pcmData.size)
-        if (written > 0) {
-            // 16-bit mono: each frame is 2 bytes
-            totalFramesWritten += written / 2
-            onLevelChanged?.invoke(computePcmLevel(pcmData))
-        } else if (written < 0) {
-            Log.e(TAG, "AudioTrack.write error: $written")
+        try {
+            val written = track.write(pcmData, 0, pcmData.size)
+            if (written > 0) {
+                // 16-bit mono: each frame is 2 bytes
+                totalFramesWritten += written / 2
+                onLevelChanged?.invoke(computePcmLevel(pcmData))
+            } else if (written < 0) {
+                Log.e(TAG, "AudioTrack.write error: $written")
+            }
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "AudioTrack already released, skipping write")
         }
     }
 

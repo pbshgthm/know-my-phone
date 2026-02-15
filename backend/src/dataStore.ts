@@ -323,7 +323,13 @@ export async function listConversations(
         });
       }
     }
-    return convs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    // Show newest-created sessions first. Tie-break for deterministic ordering.
+    return convs.sort(
+      (a, b) =>
+        b.createdAt.localeCompare(a.createdAt) ||
+        b.updatedAt.localeCompare(a.updatedAt) ||
+        b.id.localeCompare(a.id)
+    );
   } catch {
     return [];
   }

@@ -9,6 +9,7 @@ import type {
   Highlight,
   UiTree,
   RedactionInfo,
+  VisualRedactionInfo,
 } from "../protocol.js";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -126,14 +127,37 @@ export async function triageQuery(
 function buildVisualAnalysisUserText(
   userText: string,
   uiTree: UiTree,
-  redactions?: RedactionInfo[]
+  redactions?: RedactionInfo[],
+  visualRedactions?: VisualRedactionInfo[]
 ): string {
   let text = `User question: ${userText}\n\nUI Tree:\n${JSON.stringify(uiTree, null, 2)}`;
-  if (redactions && redactions.length > 0) {
-    text += "\n\nPII Redaction Notice:";
-    for (const r of redactions) {
-      text += `\n- ${r.type}: ${r.count} instance(s) in nodes [${r.nodeIds.join(", ")}]`;
+
+  const hasTextRedactions = redactions && redactions.length > 0;
+  const hasVisualRedactions = visualRedactions && visualRedactions.length > 0;
+
+  if (hasTextRedactions || hasVisualRedactions) {
+    text += "\n\n⚠️ PRIVACY REDACTION NOTICE — Sensitive information was detected and redacted BEFORE being sent to you. DO NOT attempt to guess or reconstruct the redacted content.";
+
+    if (hasTextRedactions) {
+      text += "\n\nText redactions (in UI tree, replaced with [REDACTED:...] tokens):";
+      for (const r of redactions!) {
+        const label = r.type.replace("[REDACTED:", "").replace("]", "");
+        const nodeInfo = r.nodeIds.length > 0
+          ? ` in nodes [${r.nodeIds.join(", ")}]`
+          : "";
+        text += `\n- ${label}: ${r.count} instance(s)${nodeInfo}`;
+      }
     }
+
+    if (hasVisualRedactions) {
+      text += "\n\nVisual redactions (black boxes with [REDACTED: ...] labels drawn on the screenshot):";
+      for (const vr of visualRedactions!) {
+        const { left, top, right, bottom } = vr.bounds;
+        text += `\n- ${vr.label} at screen region [${left},${top} → ${right},${bottom}]`;
+      }
+    }
+
+    text += "\n\nIf the user asks about content in a redacted area, tell them it was automatically hidden for privacy.";
   }
   return text;
 }
@@ -230,7 +254,8 @@ export async function* streamVisualAnalysis(
   signal?: AbortSignal,
   autoScreenshot: boolean = false,
   redactions?: RedactionInfo[],
-  deviceInfo?: DeviceInfo
+  deviceInfo?: DeviceInfo,
+  visualRedactions?: VisualRedactionInfo[]
 ): AsyncGenerator<string> {
   const messages: ChatMessage[] = [
     { role: "system", content: getVisualAnalysisPrompt(autoScreenshot, deviceInfo) },
@@ -243,7 +268,7 @@ export async function* streamVisualAnalysis(
       content: [
         {
           type: "text",
-          text: buildVisualAnalysisUserText(userText, uiTree, redactions),
+          text: buildVisualAnalysisUserText(userText, uiTree, redactions, visualRedactions),
         },
         {
           type: "image_url",

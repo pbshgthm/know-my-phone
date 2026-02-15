@@ -9,7 +9,10 @@ const STT_LANGUAGE_CODES: Record<string, string> = {
   ml: "mal",
 };
 
+const DEFAULT_STREAMING_TTS_MODEL = "eleven_v3";
+
 function resolveVoiceId(languageCode: string): string {
+  const normalized = languageCode.trim().toLowerCase();
   const voiceByLang: Record<string, string | undefined> = {
     en: process.env.ELEVENLABS_VOICE_ID_EN,
     ta: process.env.ELEVENLABS_VOICE_ID_TA,
@@ -18,11 +21,34 @@ function resolveVoiceId(languageCode: string): string {
     te: process.env.ELEVENLABS_VOICE_ID_TE,
     ml: process.env.ELEVENLABS_VOICE_ID_ML,
   };
+  if (Object.prototype.hasOwnProperty.call(voiceByLang, normalized)) {
+    const voiceId = voiceByLang[normalized];
+    if (!voiceId) {
+      throw new Error(`Missing ELEVENLABS_VOICE_ID_${normalized.toUpperCase()} for language "${normalized}"`);
+    }
+    return voiceId;
+  }
+  const defaultVoiceId = process.env.ELEVENLABS_VOICE_ID;
+  if (!defaultVoiceId) {
+    throw new Error(`Missing ELEVENLABS_VOICE_ID for unsupported language "${normalized}"`);
+  }
+  return defaultVoiceId;
+}
+
+function resolveStreamingTtsModel(languageCode: string): string {
+  const modelByLang: Record<string, string | undefined> = {
+    en: process.env.ELEVENLABS_STREAMING_MODEL_EN,
+    ta: process.env.ELEVENLABS_STREAMING_MODEL_TA,
+    hi: process.env.ELEVENLABS_STREAMING_MODEL_HI,
+    kn: process.env.ELEVENLABS_STREAMING_MODEL_KN,
+    te: process.env.ELEVENLABS_STREAMING_MODEL_TE,
+    ml: process.env.ELEVENLABS_STREAMING_MODEL_ML,
+  };
 
   return (
-    voiceByLang[languageCode] ||
-    process.env.ELEVENLABS_VOICE_ID ||
-    "21m00Tcm4TlvDq8ikWAM"
+    modelByLang[languageCode] ||
+    process.env.ELEVENLABS_STREAMING_MODEL ||
+    DEFAULT_STREAMING_TTS_MODEL
   );
 }
 
@@ -82,11 +108,6 @@ export async function transcribeAudio(
   return transcript;
 }
 
-// Streaming TTS model — use env override or default to eleven_v3
-// (same model as the non-streaming text-to-dialogue endpoint).
-const STREAMING_TTS_MODEL =
-  process.env.ELEVENLABS_STREAMING_MODEL || "eleven_v3";
-
 export async function* streamTextToSpeech(
   text: string,
   languageCode: string,
@@ -98,9 +119,10 @@ export async function* streamTextToSpeech(
   }
 
   const voiceId = resolveVoiceId(languageCode);
+  const streamingModel = resolveStreamingTtsModel(languageCode);
 
   console.log(
-    `[ElevenLabs] 🔊 Streaming TTS (${text.length} chars, voice: ${voiceId}, model: ${STREAMING_TTS_MODEL})...`
+    `[ElevenLabs] 🔊 Streaming TTS (${text.length} chars, voice: ${voiceId}, model: ${streamingModel})...`
   );
 
   const fetchSignal = signal
@@ -117,7 +139,7 @@ export async function* streamTextToSpeech(
       },
       body: JSON.stringify({
         text,
-        model_id: STREAMING_TTS_MODEL,
+        model_id: streamingModel,
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75,
@@ -140,7 +162,7 @@ export async function* streamTextToSpeech(
   if (contentType.includes("mpeg") || contentType.includes("mp3")) {
     throw new Error(
       `ElevenLabs returned MP3 instead of PCM (content-type: ${contentType}). ` +
-        `The output_format=pcm_24000 param may not be supported for model ${STREAMING_TTS_MODEL}.`
+        `The output_format=pcm_24000 param may not be supported for model ${streamingModel}.`
     );
   }
 

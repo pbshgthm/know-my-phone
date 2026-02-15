@@ -42,6 +42,9 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design.
    Optional model configuration:
    - `LLM_TEXT_MODEL` - Model for text triage/analysis (default: `openai/gpt-5.2`)
    - `LLM_VISION_MODEL` - Model for visual analysis (default: `openai/gpt-5.2`)
+   - `ELEVENLABS_STREAMING_MODEL` - Global TTS model ID (default: `eleven_v3`)
+   - `ELEVENLABS_VOICE_ID_EN|TA|HI|KN|TE|ML` - Per-language TTS voice IDs
+   - `ELEVENLABS_STREAMING_MODEL_EN|TA|HI|KN|TE|ML` - Per-language TTS model IDs
 
 3. **Run the server:**
    ```bash

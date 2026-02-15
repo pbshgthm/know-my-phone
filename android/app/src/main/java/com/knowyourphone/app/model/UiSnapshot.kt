@@ -24,7 +24,9 @@ data class UiNode(
     val focused: Boolean? = null,
     val scrollable: Boolean? = null,
     val depth: Int? = null,
-    val childCount: Int? = null
+    val childCount: Int? = null,
+    val inputType: Int? = null,
+    val isPassword: Boolean? = null
 )
 
 data class Bounds(

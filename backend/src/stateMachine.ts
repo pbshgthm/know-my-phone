@@ -286,7 +286,8 @@ export async function handleAudioReceived(
             signal,
             session.autoScreenshot,
             msg.redactions,
-            session.deviceInfo
+            session.deviceInfo,
+            msg.visualRedactions
           );
           await streamAnswerToClient(ws, session, generator, signal, transcript);
         }
@@ -418,7 +419,8 @@ export async function handleScreenshotResponse(
       signal,
       session.autoScreenshot,
       message.redactions,
-      session.deviceInfo
+      session.deviceInfo,
+      message.visualRedactions
     );
 
     await streamAnswerToClient(ws, session, visualGenerator, signal, pending.userText);

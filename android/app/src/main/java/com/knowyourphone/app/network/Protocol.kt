@@ -32,12 +32,19 @@ data class SetLanguageMessage(
     val languageCode: String
 )
 
+data class ScreenRedactionInfo(
+    val type: String,       // e.g. "FACE", "QR_CODE", "UPI_ID"
+    val label: String,      // human-readable label
+    val bounds: Map<String, Int> // left, top, right, bottom
+)
+
 data class ScreenshotResponseMessage(
     val type: String = "screenshot_response",
     val screenshot: String, // base64 JPEG
     val uiTree: JsonObject,
     val redacted: Boolean = false,
-    val redactions: List<RedactionSummary> = emptyList()
+    val redactions: List<RedactionSummary> = emptyList(),
+    val visualRedactions: List<ScreenRedactionInfo> = emptyList()
 )
 
 data class ScreenshotDeclinedMessage(
