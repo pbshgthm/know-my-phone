@@ -3,9 +3,8 @@ import type { RawData } from "ws";
 import {
   createSession,
   deleteSession,
-  getOrCreateSessionForClient,
-  resetSessionForClient,
-  getMessageCounts,
+  getOrCreateSession,
+  resetSession,
   type Session,
 } from "./session.js";
 import type { ScreenshotResponseMessage } from "./protocol.js";
@@ -20,7 +19,7 @@ import {
 interface ClientState {
   session: Session;
   pendingAudioData: boolean;
-  clientId?: string;
+  sessionId?: string;
 }
 
 const clients = new Map<WebSocket, ClientState>();
@@ -31,17 +30,17 @@ export function getAllClients(): Map<WebSocket, ClientState> {
 }
 
 export function handleConnection(ws: WebSocket): void {
-  const session = createSession();
+  // Temporary session until hello message provides the client-generated sessionId
+  const session = createSession(`tmp_${Date.now()}`);
   const state: ClientState = {
     session,
     pendingAudioData: false,
-    clientId: undefined,
+    sessionId: undefined,
   };
   clients.set(ws, state);
 
   console.log(`\n${'='.repeat(60)}`);
   console.log(`[WS] 🔌 Client connected`);
-  console.log(`[WS] 📋 Session ID: ${session.id}`);
   console.log(`[WS] 👥 Active connections: ${clients.size}`);
   console.log(`${'='.repeat(60)}\n`);
 
@@ -53,15 +52,13 @@ export function handleConnection(ws: WebSocket): void {
     console.log(`\n[WS] 👋 Client disconnected, session: ${state.session.id}`);
     console.log(`[WS] 👥 Active connections: ${clients.size - 1}\n`);
     cleanupSession(state.session.id);
-    // Keep session in memory if we have a clientId (for reconnect resume)
-    if (!state.clientId) {
-      deleteSession(state.session.id);
-    }
+    // Always clean up session on disconnect (no persistent client IDs)
+    deleteSession(state.session.id);
     clients.delete(ws);
   });
 
   ws.on("error", (err) => {
-    console.error(`[WS] ❌ Error for session ${session.id}:`, err);
+    console.error(`[WS] ❌ Error for session ${state.session.id}:`, err);
   });
 }
 
@@ -107,50 +104,33 @@ function handleMessage(
 
   switch (parsed.type) {
     case "hello": {
-      const clientId = typeof parsed.clientId === "string" ? parsed.clientId : "";
-      if (!clientId) {
-        ws.send(JSON.stringify({ type: "error", message: "Missing clientId" }));
+      const sessionId = typeof parsed.sessionId === "string" ? parsed.sessionId : "";
+      if (!sessionId) {
+        ws.send(JSON.stringify({ type: "error", message: "Missing sessionId" }));
         return;
       }
-      // Rebind session to this clientId
-      if (state.clientId !== clientId) {
-        // Clean up old session if it was anonymous
-        if (!state.clientId) {
+      // Bind to the client-provided sessionId
+      if (state.sessionId !== sessionId) {
+        // Clean up temporary session
+        if (!state.sessionId) {
           cleanupSession(state.session.id);
           deleteSession(state.session.id);
         }
-        state.clientId = clientId;
-        state.session = getOrCreateSessionForClient(clientId);
-        console.log(`[WS] 🔑 Bound session ${state.session.id} to clientId=${clientId}`);
+        state.sessionId = sessionId;
+        state.session = getOrCreateSession(sessionId);
+        console.log(`[WS] 🔑 Bound to sessionId=${sessionId}`);
       }
-      const counts = getMessageCounts(state.session);
-      ws.send(
-        JSON.stringify({
-          type: "session_status",
-          sessionId: state.session.id,
-          userCount: counts.userCount,
-          assistantCount: counts.assistantCount,
-        })
-      );
       break;
     }
 
     case "reset_session": {
-      if (!state.clientId) {
-        ws.send(JSON.stringify({ type: "error", message: "No clientId; cannot reset session" }));
+      if (!state.sessionId) {
+        ws.send(JSON.stringify({ type: "error", message: "No session; send hello first" }));
         return;
       }
       cleanupSession(state.session.id);
-      state.session = resetSessionForClient(state.clientId, state.session.languageCode);
-      console.log(`[WS] 🔄 Session reset for clientId=${state.clientId}, new session=${state.session.id}`);
-      ws.send(
-        JSON.stringify({
-          type: "session_status",
-          sessionId: state.session.id,
-          userCount: 0,
-          assistantCount: 0,
-        })
-      );
+      state.session = resetSession(state.sessionId, state.session.languageCode);
+      console.log(`[WS] 🔄 Session reset: ${state.sessionId}`);
       break;
     }
 

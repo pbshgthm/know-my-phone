@@ -1,6 +1,6 @@
 # Know Your Phone - Android Voice Assistant
 
-A hackathon prototype that helps users understand what's on their Android screen using AI-powered voice assistance. The app shows a floating dot overlay, listens to voice questions, and provides spoken answers with visual highlights on UI elements.
+A hackathon prototype that helps users understand what's on their Android screen using AI-powered voice assistance. The app shows a floating pill overlay, listens to voice questions, and provides spoken answers with visual highlights on UI elements.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design.
 │   Kotlin    │                    │  Node.js/TS  │
 └─────────────┘                    └──────────────┘
      │                                     │
-     ├─ Overlay UI (dot)                  ├─ Whisper STT
+     ├─ Overlay UI (pill)                 ├─ Whisper STT
      ├─ Audio recording                   ├─ OpenRouter LLM
      ├─ Accessibility tree                └─ ElevenLabs TTS
      └─ Screenshot capture
@@ -96,7 +96,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design.
 2. Install and launch the Android app
 3. Grant all required permissions
 4. Tap "Start Assistant"
-5. The floating dot appears - tap it to talk
+5. The floating pill appears - press and hold to talk
 6. Ask questions like:
    - "Where is the settings button?"
    - "What should I tap next?"
@@ -110,18 +110,22 @@ IDLE → LISTENING → THINKING → SPEAKING → [HIGHLIGHTING] → IDLE
               NEED_SCREENSHOT → THINKING → ...
 ```
 
-### Dot Colors
-- **Gray** - Idle, ready to listen
-- **Green (pulsing)** - Listening to your voice
-- **Yellow (rotating)** - Thinking / processing
-- **Blue (pulsing)** - Speaking the answer
-- **Orange** - Needs screenshot confirmation
-- **Purple** - Showing highlights
+### Pill UI + Interaction
+- **Idle**: mic icon only.
+- **Listening**: morphs into pill, mic icon + right-side audio-lines (equalizer). Release to send. **No drag** while listening.
+- **Thinking**: loader icon only.
+- **Need screenshot**: camera icon + “Screenshot”, right-side ✓ / ✕ (no audio during request).
+- **Speaking**: sparkles icon + right-side audio-lines.
+- **Drag**: allowed in idle/thinking/speaking; locked while listening.
 
 ## WebSocket Protocol
 
 ### Client → Server
 ```typescript
+// 0. Bind session + language
+{"type": "hello", "clientId": "uuid"}
+{"type": "set_language", "languageCode": "en|ta|hi|kn|te"}
+
 // 1. Send audio
 {"type": "audio_data", "format": "wav", "sampleRate": 16000}
 <binary WAV data>
@@ -131,6 +135,9 @@ IDLE → LISTENING → THINKING → SPEAKING → [HIGHLIGHTING] → IDLE
 
 // 3. Decline screenshot
 {"type": "screenshot_declined"}
+
+// 4. Reset session (manual)
+{"type": "reset_session"}
 ```
 
 ### Server → Client
@@ -138,12 +145,15 @@ IDLE → LISTENING → THINKING → SPEAKING → [HIGHLIGHTING] → IDLE
 // 1. Transcript
 {"type": "transcript", "text": "what's on this screen?"}
 
-// 2. Need screenshot
-{"type": "need_screenshot", "reason": "Need to see visual content"}
+// 2. Screenshot request (no audio; modal-only prompt)
+{"type": "screenshot_request", "text": "", "reason": "Need to see visual content", "hasAudio": false}
 
 // 3. Answer + audio
-{"type": "answer", "text": "This is the Settings screen", "highlights": [...]}
+{"type": "answer", "text": "This is the Settings screen", "highlights": [...], "hasAudio": true}
 <binary MP3 data>
+
+// 4. Session status (message counts)
+{"type": "session_status", "sessionId": "uuid", "userCount": 3, "assistantCount": 3}
 
 // 4. Error
 {"type": "error", "message": "Something went wrong"}
@@ -192,8 +202,9 @@ The default LLM model is `openai/gpt-5.2`, configurable via `LLM_TEXT_MODEL` and
 - `getRootInActiveWindow()` returns null during screen transitions
 - Screenshot bitmaps must be copied from `HardwareBuffer` to `ARGB_8888` format before JPEG compression
 - Device connection requires `adb reverse tcp:8765 tcp:8765` for both emulators and physical devices (can be configured via `./adb-reverse.sh`)
-- Dot overlay uses `FLAG_NOT_FOCUSABLE` to receive touches without stealing focus
+- Overlay pill uses `FLAG_NOT_FOCUSABLE` to receive touches without stealing focus
 - Highlight overlay uses `FLAG_NOT_TOUCHABLE | FLAG_NOT_FOCUSABLE` for touch passthrough
+- Press-and-hold starts recording; release sends. Drag is disabled while listening.
 
 ## Project Structure
 
@@ -222,7 +233,7 @@ know-your-phone/
             ├── MainActivity.kt
             ├── OverlayService.kt
             ├── KypAccessibilityService.kt
-            ├── overlay/         # DotView, HighlightOverlayView, ConfirmPillView
+            ├── overlay/         # DotView, HighlightOverlayView
             ├── audio/           # AudioRecorder, AudioPlayer
             ├── network/         # WsClient, Protocol
             ├── state/           # AssistantState, AssistantViewModel

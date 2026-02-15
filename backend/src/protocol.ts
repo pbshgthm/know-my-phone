@@ -3,7 +3,7 @@
 export interface Highlight {
   elementId: string;
   label: string;
-  bounds: {
+  bounds?: {
     left: number;
     top: number;
     right: number;
@@ -21,7 +21,7 @@ export interface AudioDataMessage {
 
 export interface HelloMessage {
   type: "hello";
-  clientId: string;
+  sessionId: string;
 }
 
 export interface ResetSessionMessage {
@@ -63,11 +63,6 @@ export interface TranscriptMessage {
   text: string;
 }
 
-export interface NeedScreenshotMessage {
-  type: "need_screenshot";
-  reason: string;
-}
-
 export interface ScreenshotRequestMessage {
   type: "screenshot_request";
   text: string;
@@ -82,13 +77,6 @@ export interface AnswerMessage {
   hasAudio: boolean;
 }
 
-export interface SessionStatusMessage {
-  type: "session_status";
-  sessionId: string;
-  userCount: number;
-  assistantCount: number;
-}
-
 export interface ErrorMessage {
   type: "error";
   message: string;
@@ -100,10 +88,8 @@ export interface CancelledMessage {
 
 export type ServerMessage =
   | TranscriptMessage
-  | NeedScreenshotMessage
   | ScreenshotRequestMessage
   | AnswerMessage
-  | SessionStatusMessage
   | ErrorMessage
   | CancelledMessage;
 
@@ -137,7 +123,6 @@ export interface UiTree {
 export interface TriageResult {
   needsScreenshot: boolean;
   reason: string;
-  requestSpeech: string;
 }
 
 // Visual analysis result from LLM

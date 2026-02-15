@@ -55,6 +55,7 @@ class MainActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, padding, padding, padding)
+            setBackgroundColor(Color.WHITE)
         }
 
         root.addView(TextView(this).apply {
@@ -89,18 +90,36 @@ class MainActivity : AppCompatActivity() {
             LanguageOption("Kannada", "kn"),
             LanguageOption("Telugu", "te")
         )
-        val adapter = ArrayAdapter(
+        val adapter = object : ArrayAdapter<String>(
             this,
             android.R.layout.simple_spinner_item,
             languages.map { it.label }
-        )
+        ) {
+            override fun getView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val view = super.getView(position, convertView, parent) as TextView
+                styleSpinnerItem(view, isDropdown = false)
+                return view
+            }
+
+            override fun getDropDownView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val view = super.getDropDownView(position, convertView, parent) as TextView
+                styleSpinnerItem(view, isDropdown = true)
+                return view
+            }
+        }
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         languageSpinner.adapter = adapter
+        languageSpinner.setPadding(dp(12), dp(10), dp(12), dp(10))
         languageSpinner.background = GradientDrawable().apply {
-            cornerRadius = dp(10).toFloat()
+            cornerRadius = dp(12).toFloat()
             setStroke(dp(1), 0x22000000)
-            setColor(Color.TRANSPARENT)
+            setColor(Color.WHITE)
         }
+        languageSpinner.setPopupBackgroundDrawable(GradientDrawable().apply {
+            cornerRadius = dp(12).toFloat()
+            setStroke(dp(1), 0x22000000)
+            setColor(Color.WHITE)
+        })
         root.addView(languageSpinner, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
@@ -183,6 +202,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         setContentView(root)
+
+        // Ensure dropdown positions below the spinner
+        languageSpinner.post {
+            languageSpinner.dropDownWidth = languageSpinner.width
+            languageSpinner.dropDownVerticalOffset = languageSpinner.height + dp(6)
+            languageSpinner.dropDownHorizontalOffset = 0
+        }
     }
 
     private fun makePermissionRow(label: String): Pair<LinearLayout, TextView> {
@@ -309,6 +335,14 @@ class MainActivity : AppCompatActivity() {
                 setColor(Color.TRANSPARENT)
             }
         }
+    }
+
+    private fun styleSpinnerItem(view: TextView, isDropdown: Boolean) {
+        view.textSize = 16f
+        view.setTextColor(0xFF1F1F1F.toInt())
+        val vPad = if (isDropdown) dp(12) else dp(8)
+        view.setPadding(dp(12), vPad, dp(12), vPad)
+        view.background = null
     }
 
     private data class LanguageOption(val label: String, val code: String)

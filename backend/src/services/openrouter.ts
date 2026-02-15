@@ -96,7 +96,7 @@ export async function triageQuery(
   userText: string,
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
   signal?: AbortSignal
-): Promise<{ needsScreenshot: boolean; reason: string; requestSpeech: string }> {
+): Promise<{ needsScreenshot: boolean; reason: string }> {
   const messages: ChatMessage[] = [
     { role: "system", content: TRIAGE_SYSTEM_PROMPT },
     ...conversationHistory.map((h) => ({
@@ -107,11 +107,10 @@ export async function triageQuery(
   ];
 
   const raw = await chatCompletion(messages, TEXT_MODEL, 15_000, signal);
-  const parsed = parseJSON<{ needsScreenshot: boolean; reason: string; requestSpeech?: string }>(raw);
+  const parsed = parseJSON<{ needsScreenshot: boolean; reason: string }>(raw);
   return {
     needsScreenshot: parsed.needsScreenshot,
     reason: parsed.reason,
-    requestSpeech: parsed.requestSpeech ?? "",
   };
 }
 

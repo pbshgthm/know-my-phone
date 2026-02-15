@@ -3,7 +3,6 @@ import type {
   AudioDataMessage,
   ScreenshotResponseMessage,
   TranscriptMessage,
-  NeedScreenshotMessage,
   AnswerMessage,
   ErrorMessage,
   Highlight,
@@ -53,25 +52,27 @@ describe('Protocol Message Types', () => {
     };
     expect(transcript.type).toBe('transcript');
 
-    const needScreenshot: NeedScreenshotMessage = {
-      type: 'need_screenshot',
-      reason: 'Need to see image',
-    };
-    expect(needScreenshot.type).toBe('need_screenshot');
-
-    const highlight: Highlight = {
+    // Highlight with optional bounds
+    const highlightWithBounds: Highlight = {
       elementId: 'n_1',
       label: 'Tap here',
       bounds: { left: 0, top: 0, right: 100, bottom: 50 },
     };
 
+    const highlightWithoutBounds: Highlight = {
+      elementId: 'n_2',
+      label: 'Settings',
+    };
+
     const answer: AnswerMessage = {
       type: 'answer',
       text: 'Tap the button',
-      highlights: [highlight],
+      highlights: [highlightWithBounds, highlightWithoutBounds],
       hasAudio: true,
     };
-    expect(answer.highlights.length).toBe(1);
+    expect(answer.highlights.length).toBe(2);
+    expect(answer.highlights[0].bounds).toBeDefined();
+    expect(answer.highlights[1].bounds).toBeUndefined();
 
     const error: ErrorMessage = {
       type: 'error',

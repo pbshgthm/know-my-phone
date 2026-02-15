@@ -12,42 +12,39 @@ import android.graphics.RectF
 import android.util.TypedValue
 import android.view.View
 import android.view.animation.LinearInterpolator
+import android.view.animation.OvershootInterpolator
 import androidx.core.graphics.PathParser
 import com.knowyourphone.app.state.AssistantState
+import kotlin.math.max
 
 class DotView(context: Context) : View(context) {
     companion object {
-        // Outer size includes shadow padding
-        const val DOT_SIZE_DP = 72
-        private const val ORB_DIAMETER_DP = 56f
-        private const val ICON_SIZE_DP = 24f
+        const val DOT_SIZE_DP = 68
+        private const val PILL_HEIGHT_DP = 48f
+        private const val SHADOW_PAD_DP = 6f
+        private const val ICON_SIZE_DP = 20f
+        private const val PILL_MIN_WIDTH_DP = 200f
 
         private const val COLOR_WHITE = Color.WHITE
-        private const val COLOR_ICON = 0xFF222222.toInt()
-        private const val COLOR_ICON_MUTED = 0xFF666666.toInt()
-        private const val COLOR_BADGE_BG = 0xE6FFFFFF.toInt()
-        private const val COLOR_BADGE_TEXT = 0xFF222222.toInt()
-        private const val COLOR_DISCONNECTED = 0xFFFF5252.toInt()
-        private const val COLOR_RECONNECTING = 0xFFFFC107.toInt()
+        private const val COLOR_ICON = 0xFF1F1F1F.toInt()
+        private const val COLOR_ICON_MUTED = 0xFF6B6B6B.toInt()
+        private const val COLOR_BORDER = 0x22000000
+        private const val COLOR_DISCONNECTED = 0xFF2B2B2B.toInt()
+        private const val COLOR_RECONNECTING = 0xFF5A5A5A.toInt()
     }
 
     enum class ConnectionState { CONNECTED, DISCONNECTED, RECONNECTING }
+    enum class PillAction { X_BUTTON, CONFIRM, NONE }
 
     private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         color = Color.argb(50, 0, 0, 0)
-        maskFilter = BlurMaskFilter(dp(8f), BlurMaskFilter.Blur.NORMAL)
+        maskFilter = BlurMaskFilter(dp(SHADOW_PAD_DP), BlurMaskFilter.Blur.NORMAL)
     }
 
-    private val orbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         color = COLOR_WHITE
-    }
-
-    private val listeningRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = dp(1.5f)
-        color = COLOR_ICON
     }
 
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -58,16 +55,16 @@ class DotView(context: Context) : View(context) {
         strokeJoin = Paint.Join.ROUND
     }
 
-    private val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = COLOR_BADGE_BG
+        color = COLOR_ICON
+        textSize = dp(14f)
     }
 
-    private val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = COLOR_BADGE_TEXT
-        textSize = dp(11f)
-        textAlign = Paint.Align.CENTER
+    private val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1f)
+        color = COLOR_BORDER
     }
 
     private val statusDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -76,20 +73,6 @@ class DotView(context: Context) : View(context) {
 
     private var currentState = AssistantState.IDLE
     private var connectionState = ConnectionState.CONNECTED
-    private var userCount = 0
-    private var assistantCount = 0
-
-    private var listeningAlpha = 0
-    private val listeningAnimator = ValueAnimator.ofInt(40, 160).apply {
-        duration = 800
-        repeatMode = ValueAnimator.REVERSE
-        repeatCount = ValueAnimator.INFINITE
-        interpolator = LinearInterpolator()
-        addUpdateListener {
-            listeningAlpha = it.animatedValue as Int
-            invalidate()
-        }
-    }
 
     private var loaderRotation = 0f
     private val loaderAnimator = ValueAnimator.ofFloat(0f, 360f).apply {
@@ -102,20 +85,27 @@ class DotView(context: Context) : View(context) {
         }
     }
 
-    private var speakingAlpha = 255
-    private val speakingAnimator = ValueAnimator.ofInt(120, 255).apply {
+    private var eqAlpha = 255
+    private val eqAnimator = ValueAnimator.ofInt(120, 255).apply {
         duration = 600
         repeatMode = ValueAnimator.REVERSE
         repeatCount = ValueAnimator.INFINITE
         interpolator = LinearInterpolator()
         addUpdateListener {
-            speakingAlpha = it.animatedValue as Int
+            eqAlpha = it.animatedValue as Int
             invalidate()
         }
     }
 
+    // Width animation for smooth pill size transitions
+    private var animatedWidth = 0f
+    private var widthAnimator: ValueAnimator? = null
+
     private val tempPath = Path()
     private val tempMatrix = Matrix()
+
+    private val xButtonRect = RectF()
+    private val confirmRect = RectF()
 
     // Lucide icons (24x24 viewBox)
     private val micPaths: List<Path> = listOf(
@@ -146,6 +136,22 @@ class DotView(context: Context) : View(context) {
         path("M22 10v3")
     )
 
+    private val sparklesPaths: List<Path> = listOf(
+        path("M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"),
+        path("M20 2v4"),
+        path("M22 4h-4"),
+        path("M4 18a2 2 0 1 0 0 4a2 2 0 0 0 0-4")
+    )
+
+    private val checkPaths: List<Path> = listOf(
+        path("M20 6 9 17l-5-5")
+    )
+
+    private val xPaths: List<Path> = listOf(
+        path("M18 6 6 18"),
+        path("m6 6 12 12")
+    )
+
     init {
         setLayerType(LAYER_TYPE_SOFTWARE, null)
     }
@@ -154,19 +160,19 @@ class DotView(context: Context) : View(context) {
         currentState = state
         iconPaint.color = if (state == AssistantState.IDLE) COLOR_ICON_MUTED else COLOR_ICON
 
-        listeningAnimator.cancel()
         loaderAnimator.cancel()
-        speakingAnimator.cancel()
-        listeningAlpha = 0
+        eqAnimator.cancel()
         loaderRotation = 0f
-        speakingAlpha = 255
+        eqAlpha = 255
 
         when (state) {
-            AssistantState.LISTENING -> listeningAnimator.start()
+            AssistantState.LISTENING -> eqAnimator.start()
             AssistantState.THINKING -> loaderAnimator.start()
-            AssistantState.SPEAKING -> speakingAnimator.start()
+            AssistantState.SPEAKING -> eqAnimator.start()
             else -> { /* no animation */ }
         }
+
+        animateToTargetWidth()
         invalidate()
     }
 
@@ -175,48 +181,148 @@ class DotView(context: Context) : View(context) {
         invalidate()
     }
 
-    fun setMessageCounts(user: Int, assistant: Int) {
-        userCount = user
-        assistantCount = assistant
-        invalidate()
+    private fun computeTargetWidthPx(): Float {
+        val pillHeight = dp(PILL_HEIGHT_DP)
+        val shadowPad = dp(SHADOW_PAD_DP)
+
+        val text = statusText()
+        val textWidth = if (text.isNotBlank()) textPaint.measureText(text) else 0f
+
+        // Left: X icon zone (pillHeight) | center: text or eq | right: icon zone (pillHeight)
+        val contentWidth = pillHeight + dp(8f) + textWidth + dp(8f) + pillHeight
+        val minWidth = dp(PILL_MIN_WIDTH_DP)
+        val width = max(contentWidth, minWidth)
+        return width + shadowPad * 2f
+    }
+
+    fun getDesiredWidthPx(): Int {
+        return if (animatedWidth > 0f) animatedWidth.toInt() else computeTargetWidthPx().toInt()
+    }
+
+    fun getDesiredHeightPx(): Int {
+        return (dp(PILL_HEIGHT_DP) + dp(SHADOW_PAD_DP * 2)).toInt()
+    }
+
+    private fun animateToTargetWidth() {
+        val target = computeTargetWidthPx()
+        val current = if (animatedWidth > 0f) animatedWidth else target
+
+        if (current == target) {
+            animatedWidth = target
+            requestLayout()
+            return
+        }
+
+        widthAnimator?.cancel()
+        widthAnimator = ValueAnimator.ofFloat(current, target).apply {
+            duration = 200
+            interpolator = OvershootInterpolator(0.8f)
+            addUpdateListener {
+                animatedWidth = it.animatedValue as Float
+                requestLayout()
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    fun hitTestAction(x: Float, y: Float): PillAction {
+        return when {
+            xButtonRect.contains(x, y) -> PillAction.X_BUTTON
+            currentState == AssistantState.NEED_SCREENSHOT && confirmRect.contains(x, y) -> PillAction.CONFIRM
+            else -> PillAction.NONE
+        }
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension(getDesiredWidthPx(), getDesiredHeightPx())
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val cx = width / 2f
-        val cy = height / 2f
-        val orbRadius = dp(ORB_DIAMETER_DP / 2f)
+        val shadowPad = dp(SHADOW_PAD_DP)
+        val pillHeight = dp(PILL_HEIGHT_DP)
+        val pillRadius = pillHeight / 2f
+        val pillWidth = (getDesiredWidthPx() - shadowPad * 2f)
 
-        // Shadow
-        canvas.drawCircle(cx, cy + dp(3f), orbRadius, shadowPaint)
+        val left = shadowPad
+        val top = (height - pillHeight) / 2f
+        val rect = RectF(left, top, left + pillWidth, top + pillHeight)
 
-        // Orb
-        canvas.drawCircle(cx, cy, orbRadius, orbPaint)
+        // Shadow + pill (always pill, never circle)
+        canvas.drawRoundRect(rect, pillRadius, pillRadius, shadowPaint)
+        canvas.drawRoundRect(rect, pillRadius, pillRadius, pillPaint)
 
-        // Listening ring
-        if (currentState == AssistantState.LISTENING) {
-            listeningRingPaint.alpha = listeningAlpha
-            canvas.drawCircle(cx, cy, orbRadius + dp(2f), listeningRingPaint)
-        }
+        val centerY = rect.centerY()
 
-        // Icon (lucide)
+        // --- Left zone: X button ---
+        val xCenterX = rect.left + pillRadius
+        xButtonRect.set(
+            rect.left,
+            rect.top,
+            rect.left + pillHeight,
+            rect.bottom
+        )
+        drawLucide(canvas, xPaths, xCenterX, centerY, 16f, 0f, if (currentState == AssistantState.IDLE) 100 else 180)
+
+        // --- Right zone: state-specific icon ---
+        val rightCenterX = rect.right - pillRadius
+        confirmRect.setEmpty()
+
         when (currentState) {
-            AssistantState.THINKING -> drawLucide(canvas, loaderPaths, cx, cy, ICON_SIZE_DP, loaderRotation, 255)
-            AssistantState.SPEAKING -> drawLucide(canvas, audioPaths, cx, cy, ICON_SIZE_DP, 0f, speakingAlpha)
-            else -> drawLucide(canvas, micPaths, cx, cy, ICON_SIZE_DP, 0f, 255)
+            AssistantState.IDLE -> {
+                drawLucide(canvas, micPaths, rightCenterX, centerY, ICON_SIZE_DP, 0f, 140)
+            }
+            AssistantState.LISTENING -> {
+                drawLucide(canvas, micPaths, rightCenterX, centerY, ICON_SIZE_DP, 0f, 255)
+            }
+            AssistantState.THINKING -> {
+                drawLucide(canvas, loaderPaths, rightCenterX, centerY, ICON_SIZE_DP, loaderRotation, 255)
+            }
+            AssistantState.NEED_SCREENSHOT -> {
+                confirmRect.set(
+                    rect.right - pillHeight,
+                    rect.top,
+                    rect.right,
+                    rect.bottom
+                )
+                drawLucide(canvas, checkPaths, rightCenterX, centerY, ICON_SIZE_DP, 0f, 255)
+            }
+            AssistantState.SPEAKING -> {
+                drawLucide(canvas, sparklesPaths, rightCenterX, centerY, ICON_SIZE_DP, 0f, 255)
+            }
         }
 
-        // Message counter badge
-        val total = userCount + assistantCount
-        if (total > 0) {
-            drawBadge(canvas, cx, cy, orbRadius)
+        // --- Center zone: text or dynamic EQ ---
+        val centerZoneLeft = rect.left + pillHeight + dp(4f)
+        val centerZoneRight = rect.right - pillHeight - dp(4f)
+
+        when (currentState) {
+            AssistantState.LISTENING, AssistantState.SPEAKING -> {
+                // Dynamic equalizer animation in center
+                val eqCenterX = (centerZoneLeft + centerZoneRight) / 2f
+                drawLucide(canvas, audioPaths, eqCenterX, centerY, 18f, 0f, eqAlpha)
+            }
+            else -> {
+                // Text in center
+                val text = statusText()
+                if (text.isNotBlank()) {
+                    val maxTextWidth = centerZoneRight - centerZoneLeft
+                    val displayText = ellipsize(text, maxTextWidth)
+                    val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
+                    // Center the text
+                    val textWidth = textPaint.measureText(displayText)
+                    val textX = centerZoneLeft + (maxTextWidth - textWidth) / 2f
+                    canvas.drawText(displayText, textX, textY, textPaint)
+                }
+            }
         }
 
         // Connection dot (minimal)
         if (connectionState != ConnectionState.CONNECTED) {
             val color = if (connectionState == ConnectionState.RECONNECTING) COLOR_RECONNECTING else COLOR_DISCONNECTED
             statusDotPaint.color = color
-            canvas.drawCircle(cx + orbRadius - dp(6f), cy + orbRadius - dp(6f), dp(4f), statusDotPaint)
+            canvas.drawCircle(rect.right - dp(10f), rect.bottom - dp(6f), dp(4f), statusDotPaint)
         }
     }
 
@@ -251,20 +357,24 @@ class DotView(context: Context) : View(context) {
         iconPaint.alpha = 255
     }
 
-    private fun drawBadge(canvas: Canvas, cx: Float, cy: Float, orbRadius: Float) {
-        val text = "${userCount}/${assistantCount}"
-        val textWidth = badgeTextPaint.measureText(text)
-        val padding = dp(4f)
-        val badgeW = textWidth + padding * 2f
-        val badgeH = dp(16f)
-        val left = cx + orbRadius - badgeW
-        val top = cy - orbRadius - dp(10f)
-        val right = left + badgeW
-        val bottom = top + badgeH
+    private fun statusText(): String {
+        return when (currentState) {
+            AssistantState.IDLE -> "Hold to talk"
+            AssistantState.LISTENING -> ""
+            AssistantState.THINKING -> "Thinking..."
+            AssistantState.NEED_SCREENSHOT -> "Share screen"
+            AssistantState.SPEAKING -> ""
+        }
+    }
 
-        canvas.drawRoundRect(left, top, right, bottom, dp(8f), dp(8f), badgePaint)
-        val textY = top + badgeH / 2f - (badgeTextPaint.ascent() + badgeTextPaint.descent()) / 2f
-        canvas.drawText(text, left + badgeW / 2f, textY, badgeTextPaint)
+    private fun ellipsize(text: String, maxWidth: Float): String {
+        if (maxWidth <= 0f) return ""
+        if (textPaint.measureText(text) <= maxWidth) return text
+        var trimmed = text
+        while (trimmed.isNotEmpty() && textPaint.measureText("$trimmed...") > maxWidth) {
+            trimmed = trimmed.dropLast(1)
+        }
+        return if (trimmed.isEmpty()) "" else "$trimmed..."
     }
 
     private fun dp(value: Float): Float {
@@ -281,8 +391,8 @@ class DotView(context: Context) : View(context) {
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        listeningAnimator.cancel()
         loaderAnimator.cancel()
-        speakingAnimator.cancel()
+        eqAnimator.cancel()
+        widthAnimator?.cancel()
     }
 }

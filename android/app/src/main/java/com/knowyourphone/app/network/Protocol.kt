@@ -15,7 +15,7 @@ data class AudioDataMessage(
 
 data class HelloMessage(
     val type: String = "hello",
-    val clientId: String
+    val sessionId: String
 )
 
 data class ResetSessionMessage(
@@ -48,7 +48,6 @@ sealed class ServerMessage {
     data class NeedScreenshot(val reason: String) : ServerMessage()
     data class ScreenshotRequest(val text: String, val reason: String, val hasAudio: Boolean) : ServerMessage()
     data class Answer(val text: String, val highlights: List<HighlightTarget>, val hasAudio: Boolean) : ServerMessage()
-    data class SessionStatus(val sessionId: String, val userCount: Int, val assistantCount: Int) : ServerMessage()
     data class Error(val message: String) : ServerMessage()
     object Cancelled : ServerMessage()
 }
@@ -83,11 +82,6 @@ object MessageParser {
                         hasAudio = obj.get("hasAudio")?.asBoolean ?: false
                     )
                 }
-                "session_status" -> ServerMessage.SessionStatus(
-                    sessionId = obj.get("sessionId")?.asString ?: "",
-                    userCount = obj.get("userCount")?.asInt ?: 0,
-                    assistantCount = obj.get("assistantCount")?.asInt ?: 0
-                )
                 "error" -> ServerMessage.Error(
                     message = obj.get("message")?.asString ?: "Unknown error"
                 )

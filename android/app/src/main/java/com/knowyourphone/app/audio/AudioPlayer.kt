@@ -11,6 +11,7 @@ class AudioPlayer(private val context: Context) {
         private const val TAG = "AudioPlayer"
     }
 
+    @Volatile
     private var mediaPlayer: MediaPlayer? = null
     private var onCompletionCallback: (() -> Unit)? = null
 
@@ -55,6 +56,7 @@ class AudioPlayer(private val context: Context) {
     }
 
     fun stop() {
+        onCompletionCallback = null
         try {
             mediaPlayer?.let {
                 if (it.isPlaying) it.stop()

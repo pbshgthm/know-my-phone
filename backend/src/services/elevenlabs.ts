@@ -16,18 +16,6 @@ function resolveVoiceId(languageCode: string): string {
   );
 }
 
-function resolveModelId(languageCode: string): string {
-  const modelByLang: Record<string, string | undefined> = {
-    en: process.env.ELEVENLABS_MODEL_ID_EN,
-    ta: process.env.ELEVENLABS_MODEL_ID_TA,
-    hi: process.env.ELEVENLABS_MODEL_ID_HI,
-    kn: process.env.ELEVENLABS_MODEL_ID_KN,
-    te: process.env.ELEVENLABS_MODEL_ID_TE,
-  };
-
-  return modelByLang[languageCode] || process.env.ELEVENLABS_MODEL_ID || "eleven_turbo_v2_5";
-}
-
 export async function textToSpeech(
   text: string,
   languageCode: string,
@@ -40,16 +28,15 @@ export async function textToSpeech(
   }
 
   const voiceId = resolveVoiceId(languageCode);
-  const modelId = resolveModelId(languageCode);
 
-  console.log(`[ElevenLabs] 🔊 Generating TTS for text (${text.length} chars, voice: ${voiceId}, lang: ${languageCode}, model: ${modelId})...`);
+  console.log(`[ElevenLabs] 🔊 Generating TTS via text-to-dialogue (${text.length} chars, voice: ${voiceId}, lang: ${languageCode})...`);
 
   const fetchSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
     : AbortSignal.timeout(15_000);
 
   const response = await fetch(
-    `${ELEVENLABS_BASE_URL}/text-to-speech/${voiceId}`,
+    `${ELEVENLABS_BASE_URL}/text-to-dialogue?output_format=mp3_44100_128`,
     {
       method: "POST",
       headers: {
@@ -58,13 +45,18 @@ export async function textToSpeech(
         Accept: "audio/mpeg",
       },
       body: JSON.stringify({
-        text,
-        model_id: modelId,
+        inputs: [
+          {
+            text,
+            voice_id: voiceId,
+          },
+        ],
+        model_id: "eleven_v3",
         language_code: languageCode,
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
+        settings: {
+          stability: 1.0,
         },
+        apply_text_normalization: "on",
       }),
       signal: fetchSignal,
     }

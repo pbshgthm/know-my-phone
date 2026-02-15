@@ -9,14 +9,14 @@ import {
 
 describe('Session Management', () => {
   it('should create a new session', () => {
-    const session = createSession();
+    const session = createSession(`test_${Date.now()}_${Math.random()}`);
     expect(session.id).toBeDefined();
     expect(session.conversationHistory).toEqual([]);
     expect(session.createdAt).toBeLessThanOrEqual(Date.now());
   });
 
   it('should add messages to history', () => {
-    const session = createSession();
+    const session = createSession(`test_${Date.now()}_${Math.random()}`);
     addToHistory(session, 'user', 'Hello');
     addToHistory(session, 'assistant', 'Hi there!');
 
@@ -27,7 +27,7 @@ describe('Session Management', () => {
   });
 
   it('should cap history at 20 messages', () => {
-    const session = createSession();
+    const session = createSession(`test_${Date.now()}_${Math.random()}`);
 
     // Add 25 messages
     for (let i = 0; i < 25; i++) {
@@ -41,7 +41,7 @@ describe('Session Management', () => {
   });
 
   it('should format history for LLM', () => {
-    const session = createSession();
+    const session = createSession(`test_${Date.now()}_${Math.random()}`);
     addToHistory(session, 'user', 'What is this?');
     addToHistory(session, 'assistant', 'This is a button');
 
@@ -54,7 +54,7 @@ describe('Session Management', () => {
   });
 
   it('should retrieve and delete sessions', () => {
-    const session = createSession();
+    const session = createSession(`test_${Date.now()}_${Math.random()}`);
     const id = session.id;
 
     const retrieved = getSession(id);

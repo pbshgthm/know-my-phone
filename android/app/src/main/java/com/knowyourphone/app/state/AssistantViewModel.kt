@@ -23,7 +23,6 @@ class AssistantViewModel(
 ) {
     companion object {
         private const val TAG = "AssistantVM"
-        private const val SCREENSHOT_DELAY_MS = 350L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -47,13 +46,10 @@ class AssistantViewModel(
     private val _reconnecting = MutableStateFlow(false)
     val reconnecting: StateFlow<Boolean> = _reconnecting
 
-    private val _messageCounts = MutableStateFlow(MessageCounts(0, 0))
-    val messageCounts: StateFlow<MessageCounts> = _messageCounts
-
     private val audioRecorder = AudioRecorder()
     private val audioPlayer = AudioPlayer(context)
 
-    private val clientId: String = getOrCreateClientId()
+    private var sessionId: String = UUID.randomUUID().toString()
     private var languageCode: String = getPreferredLanguageCode()
 
     // The binary frame we expect after an "answer" text frame
@@ -75,7 +71,6 @@ class AssistantViewModel(
             if (wasReconnecting) {
                 _errorMessage.value = "Connected"
             }
-            // Bind session to a stable clientId
             sendHello()
             sendLanguage()
             Log.d(TAG, "Connected to server")
@@ -102,7 +97,7 @@ class AssistantViewModel(
     private var highlightDismissJob: Job? = null
 
     private fun sendHello() {
-        wsClient.sendText(MessageParser.toJson(HelloMessage(clientId = clientId)))
+        wsClient.sendText(MessageParser.toJson(HelloMessage(sessionId = sessionId)))
     }
 
     private fun sendLanguage() {
@@ -121,7 +116,8 @@ class AssistantViewModel(
     /**
      * Press-and-hold start.
      * IDLE -> start listening
-     * THINKING/SPEAKING/NEED_SCREENSHOT/HIGHLIGHTING -> cancel and start listening
+     * THINKING/SPEAKING -> cancel and start listening
+     * NEED_SCREENSHOT -> no-op (X button handles cancel)
      */
     fun onPressStart() {
         when (_state.value) {
@@ -139,13 +135,7 @@ class AssistantViewModel(
                 startListening()
             }
             AssistantState.NEED_SCREENSHOT -> {
-                onScreenshotDecline()
-                startListening()
-            }
-            AssistantState.HIGHLIGHTING -> {
-                _highlights.value = emptyList()
-                highlightDismissJob?.cancel()
-                startListening()
+                // No-op: X button handles screenshot cancel
             }
         }
     }
@@ -169,6 +159,36 @@ class AssistantViewModel(
         _state.value = AssistantState.IDLE
     }
 
+    /**
+     * X button cancel action — handles all states.
+     */
+    fun onCancel() {
+        when (_state.value) {
+            AssistantState.IDLE -> {
+                // Hide pill / stop service — handled by OverlayService
+            }
+            AssistantState.LISTENING -> {
+                audioRecorder.cancelRecording()
+                _state.value = AssistantState.IDLE
+            }
+            AssistantState.THINKING -> {
+                sendCancel()
+                expectingMp3Binary = false
+                _state.value = AssistantState.IDLE
+            }
+            AssistantState.NEED_SCREENSHOT -> {
+                onScreenshotDecline()
+            }
+            AssistantState.SPEAKING -> {
+                audioPlayer.stop()
+                _highlights.value = emptyList()
+                highlightDismissJob?.cancel()
+                pendingHighlights = emptyList()
+                _state.value = AssistantState.IDLE
+            }
+        }
+    }
+
     private fun sendCancel() {
         wsClient.sendText(MessageParser.toJson(CancelMessage()))
     }
@@ -179,6 +199,7 @@ class AssistantViewModel(
             connect()
         }
         _highlights.value = emptyList()
+        highlightDismissJob?.cancel()
         val started = audioRecorder.startRecording(scope)
         if (!started) {
             Log.e(TAG, "Failed to start recording (mic unavailable)")
@@ -244,15 +265,13 @@ class AssistantViewModel(
                 expectingMp3Binary = false
                 Log.d(TAG, "No audio, transitioning directly")
                 _errorMessage.value = "Audio unavailable"
-                // No audio coming — go to highlights or idle
+                // No audio coming — show highlights independently and go to IDLE
                 scope.launch(Dispatchers.Main) {
                     if (pendingHighlights.isNotEmpty()) {
                         _highlights.value = pendingHighlights
-                        _state.value = AssistantState.HIGHLIGHTING
                         scheduleHighlightDismiss()
-                    } else {
-                        _state.value = AssistantState.IDLE
                     }
+                    _state.value = AssistantState.IDLE
                 }
             }
             return
@@ -291,13 +310,6 @@ class AssistantViewModel(
                 is ServerMessage.Answer -> { /* handled above */ }
                 is ServerMessage.ScreenshotRequest -> { /* handled above */ }
 
-                is ServerMessage.SessionStatus -> {
-                    _messageCounts.value = MessageCounts(
-                        userCount = message.userCount,
-                        assistantCount = message.assistantCount
-                    )
-                }
-
                 is ServerMessage.Error -> {
                     Log.e(TAG, "Server error: ${message.message}")
                     _errorMessage.value = message.message
@@ -325,11 +337,12 @@ class AssistantViewModel(
                         if (pendingScreenshotRequest) {
                             pendingScreenshotRequest = false
                             _state.value = AssistantState.NEED_SCREENSHOT
-                        } else if (pendingHighlights.isNotEmpty()) {
-                            _highlights.value = pendingHighlights
-                            _state.value = AssistantState.HIGHLIGHTING
-                            scheduleHighlightDismiss()
                         } else {
+                            // Show highlights independently, pill goes to IDLE
+                            if (pendingHighlights.isNotEmpty()) {
+                                _highlights.value = pendingHighlights
+                                scheduleHighlightDismiss()
+                            }
                             _state.value = AssistantState.IDLE
                         }
                     }
@@ -343,7 +356,6 @@ class AssistantViewModel(
         highlightDismissJob = scope.launch {
             delay(10_000)
             _highlights.value = emptyList()
-            _state.value = AssistantState.IDLE
         }
     }
 
@@ -361,7 +373,15 @@ class AssistantViewModel(
         }
 
         scope.launch(Dispatchers.Main) {
-            delay(SCREENSHOT_DELAY_MS)
+            // Wait for layout pass after hiding pill, then add buffer
+            val dot = com.knowyourphone.app.OverlayService.instance?.getDotView()
+            if (dot != null) {
+                // Use post to wait for next layout pass
+                suspendCancellableCoroutine { cont ->
+                    dot.post { cont.resume(Unit) {} }
+                }
+            }
+            delay(200L)
 
             // Collect UI tree
             val uiTree = accessibility.collectUiTree()
@@ -414,12 +434,14 @@ class AssistantViewModel(
 
     fun resetSession() {
         sendCancel()
+        // Generate a fresh session ID
+        sessionId = UUID.randomUUID().toString()
         wsClient.sendText(MessageParser.toJson(ResetSessionMessage()))
+        sendHello()
         sendLanguage()
         expectingMp3Binary = false
         pendingScreenshotRequest = false
         pendingHighlights = emptyList()
-        _messageCounts.value = MessageCounts(0, 0)
         _highlights.value = emptyList()
         _state.value = AssistantState.IDLE
     }
@@ -427,15 +449,6 @@ class AssistantViewModel(
     fun setLanguage(code: String) {
         languageCode = code
         sendLanguage()
-    }
-
-    private fun getOrCreateClientId(): String {
-        val prefs = context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
-        val existing = prefs.getString("client_id", null)
-        if (!existing.isNullOrBlank()) return existing
-        val newId = UUID.randomUUID().toString()
-        prefs.edit().putString("client_id", newId).apply()
-        return newId
     }
 
     private fun getPreferredLanguageCode(): String {

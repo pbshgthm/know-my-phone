@@ -15,7 +15,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import com.knowyourphone.app.overlay.ConfirmPillView
 import com.knowyourphone.app.overlay.DotView
 import com.knowyourphone.app.overlay.ErrorToastView
 import com.knowyourphone.app.overlay.HighlightOverlayView
@@ -48,12 +47,14 @@ class OverlayService : Service() {
 
     private var dotView: DotView? = null
     private var highlightView: HighlightOverlayView? = null
-    private var confirmPillView: ConfirmPillView? = null
     private var errorToastView: ErrorToastView? = null
+    private var dotParams: WindowManager.LayoutParams? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    fun getDotView(): DotView? = dotView
 
     override fun onCreate() {
         super.onCreate()
@@ -84,7 +85,6 @@ class OverlayService : Service() {
         viewModel.destroy()
         removeDotOverlay()
         removeHighlightOverlay()
-        removeConfirmPill()
         removeErrorToast()
         scope.cancel()
         Log.d(TAG, "Overlay service destroyed")
@@ -129,12 +129,10 @@ class OverlayService : Service() {
     // --- Dot overlay ---
 
     private fun addDotOverlay() {
-        val dotSizePx = dp(DotView.DOT_SIZE_DP)
-
         dotView = DotView(this)
         val params = WindowManager.LayoutParams(
-            dotSizePx,
-            dotSizePx,
+            dotView!!.getDesiredWidthPx(),
+            dotView!!.getDesiredHeightPx(),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
@@ -143,8 +141,9 @@ class OverlayService : Service() {
             x = dp(16)
             y = dp(200)
         }
+        dotParams = params
 
-        // Make dot draggable + press-and-hold to talk
+        // Touch handler: hold-to-talk, drag, X button, check button
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
@@ -159,10 +158,33 @@ class OverlayService : Service() {
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isDragging = false
-                    viewModel.onPressStart()
+
+                    val state = viewModel.state.value
+                    // Don't start listening on X region or screenshot confirm region
+                    val action = dotView?.hitTestAction(event.x, event.y) ?: DotView.PillAction.NONE
+                    if (action == DotView.PillAction.NONE && state != AssistantState.NEED_SCREENSHOT) {
+                        if (state != AssistantState.LISTENING) {
+                            viewModel.onPressStart()
+                        }
+                    }
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    val state = viewModel.state.value
+                    // Lock movement while listening (drag cancels) or in non-idle/listening states
+                    if (state == AssistantState.LISTENING) {
+                        val dx = event.rawX - initialTouchX
+                        val dy = event.rawY - initialTouchY
+                        if (!isDragging && (dx * dx + dy * dy > 100)) {
+                            isDragging = true
+                            viewModel.cancelRecordingIfListening()
+                        }
+                        return@setOnTouchListener true
+                    }
+                    if (state != AssistantState.IDLE) {
+                        // Locked in non-idle states (except listening handled above)
+                        return@setOnTouchListener true
+                    }
                     val dx = event.rawX - initialTouchX
                     val dy = event.rawY - initialTouchY
                     if (!isDragging && (dx * dx + dy * dy > 100)) {
@@ -178,12 +200,28 @@ class OverlayService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isDragging) {
-                        viewModel.onPressEnd()
+                        val action = dotView?.hitTestAction(event.x, event.y) ?: DotView.PillAction.NONE
+                        when (action) {
+                            DotView.PillAction.X_BUTTON -> {
+                                if (viewModel.state.value == AssistantState.IDLE) {
+                                    // Hide pill, stop service
+                                    hideOverlay()
+                                } else {
+                                    viewModel.onCancel()
+                                }
+                            }
+                            DotView.PillAction.CONFIRM -> {
+                                viewModel.onScreenshotConfirm()
+                            }
+                            DotView.PillAction.NONE -> {
+                                viewModel.onPressEnd()
+                            }
+                        }
                     }
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    if (!isDragging) {
+                    if (!isDragging && viewModel.state.value != AssistantState.NEED_SCREENSHOT) {
                         viewModel.onPressEnd()
                     }
                     true
@@ -193,6 +231,11 @@ class OverlayService : Service() {
         }
 
         windowManager.addView(dotView, params)
+    }
+
+    private fun hideOverlay() {
+        viewModel.resetSession()
+        stopSelf()
     }
 
     private fun removeDotOverlay() {
@@ -227,67 +270,13 @@ class OverlayService : Service() {
         highlightView = null
     }
 
-    // --- Confirm pill ---
-
-    private fun showConfirmPill() {
-        removeConfirmPill()
-
-        confirmPillView = ConfirmPillView(
-            context = this,
-            onConfirm = {
-                removeConfirmPill()
-                viewModel.onScreenshotConfirm()
-            },
-            onDecline = {
-                removeConfirmPill()
-                viewModel.onScreenshotDecline()
-            }
-        )
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.CENTER
-        }
-
-        windowManager.addView(confirmPillView, params)
-    }
-
-    private fun removeConfirmPill() {
-        confirmPillView?.let {
-            try { windowManager.removeView(it) } catch (_: Exception) {}
-        }
-        confirmPillView = null
-    }
-
     // --- State observation ---
 
     private fun observeState() {
         scope.launch {
             viewModel.state.collect { state ->
                 dotView?.setState(state)
-
-                when (state) {
-                    AssistantState.NEED_SCREENSHOT -> {
-                        showConfirmPill()
-                    }
-                    AssistantState.HIGHLIGHTING -> {
-                        // Show highlight overlay
-                    }
-                    else -> {
-                        removeConfirmPill()
-                    }
-                }
-            }
-        }
-
-        scope.launch {
-            viewModel.messageCounts.collect { counts ->
-                dotView?.setMessageCounts(counts.userCount, counts.assistantCount)
+                updateDotLayoutForState()
             }
         }
 
@@ -372,6 +361,29 @@ class OverlayService : Service() {
             try { windowManager.removeView(it) } catch (_: Exception) {}
         }
         errorToastView = null
+    }
+
+    private fun updateDotLayoutForState() {
+        val params = dotParams ?: return
+        val dot = dotView ?: return
+
+        val desiredWidth = dot.getDesiredWidthPx()
+        val desiredHeight = dot.getDesiredHeightPx()
+        if (params.width == desiredWidth && params.height == desiredHeight) return
+
+        params.width = desiredWidth
+        params.height = desiredHeight
+
+        // Keep pill within screen bounds
+        val bounds = windowManager.currentWindowMetrics.bounds
+        val maxX = bounds.width() - params.width - dp(16)
+        if (params.x > maxX) {
+            params.x = maxX.coerceAtLeast(dp(16))
+        }
+
+        try {
+            windowManager.updateViewLayout(dot, params)
+        } catch (_: Exception) {}
     }
 
     private fun dp(value: Int): Int {

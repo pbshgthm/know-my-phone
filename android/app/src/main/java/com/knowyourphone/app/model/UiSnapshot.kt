@@ -17,7 +17,14 @@ data class UiNode(
     val className: String?,
     val clickable: Boolean,
     val enabled: Boolean,
-    val bounds: Bounds
+    val bounds: Bounds,
+    val resourceId: String? = null,
+    val checked: Boolean? = null,
+    val selected: Boolean? = null,
+    val focused: Boolean? = null,
+    val scrollable: Boolean? = null,
+    val depth: Int? = null,
+    val childCount: Int? = null
 )
 
 data class Bounds(

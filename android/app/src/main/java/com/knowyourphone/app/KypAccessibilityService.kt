@@ -3,7 +3,6 @@ package com.knowyourphone.app
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Bitmap
 import android.graphics.Rect
-import android.os.Build
 import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
@@ -56,12 +55,22 @@ class KypAccessibilityService : AccessibilityService() {
         val nodes = mutableListOf<UiNode>()
         var nodeCounter = 0
 
-        fun traverse(node: AccessibilityNodeInfo) {
+        fun traverse(node: AccessibilityNodeInfo, depth: Int) {
             val text = node.text?.toString()
             val contentDesc = node.contentDescription?.toString()
+            val resourceId = node.viewIdResourceName
 
-            // Filter: skip nodes with no text and no content description
-            if (!text.isNullOrBlank() || !contentDesc.isNullOrBlank() || node.isClickable) {
+            // Relaxed filter: include nodes with text, contentDescription, clickable,
+            // resourceId, scrollable, or checked/selected state
+            val include = !text.isNullOrBlank()
+                    || !contentDesc.isNullOrBlank()
+                    || node.isClickable
+                    || !resourceId.isNullOrBlank()
+                    || node.isScrollable
+                    || node.isChecked
+                    || node.isSelected
+
+            if (include) {
                 val rect = Rect()
                 node.getBoundsInScreen(rect)
 
@@ -76,7 +85,14 @@ class KypAccessibilityService : AccessibilityService() {
                         className = node.className?.toString(),
                         clickable = node.isClickable,
                         enabled = node.isEnabled,
-                        bounds = Bounds(rect.left, rect.top, rect.right, rect.bottom)
+                        bounds = Bounds(rect.left, rect.top, rect.right, rect.bottom),
+                        resourceId = resourceId,
+                        checked = if (node.isCheckable) node.isChecked else null,
+                        selected = if (node.isSelected) true else null,
+                        focused = if (node.isFocused) true else null,
+                        scrollable = if (node.isScrollable) true else null,
+                        depth = depth,
+                        childCount = node.childCount
                     )
                 )
             }
@@ -84,13 +100,13 @@ class KypAccessibilityService : AccessibilityService() {
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i)
                 if (child != null) {
-                    traverse(child)
+                    traverse(child, depth + 1)
                     child.recycle()
                 }
             }
         }
 
-        traverse(root)
+        traverse(root, 0)
         root.recycle()
 
         return UiSnapshot(
@@ -100,6 +116,16 @@ class KypAccessibilityService : AccessibilityService() {
             ),
             nodes = nodes
         )
+    }
+
+    /**
+     * Look up bounds for a given element ID by re-traversing the accessibility tree.
+     * Returns null if the element is no longer present (e.g. screen changed).
+     */
+    fun findBoundsForId(targetId: String): Bounds? {
+        val snapshot = collectUiTree() ?: return null
+        val node = snapshot.nodes.find { it.id == targetId }
+        return node?.bounds
     }
 
     /**
