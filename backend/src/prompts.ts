@@ -94,8 +94,8 @@ Conversation history:
 
 Element selection for highlights (CRITICAL — wrong IDs break highlighting):
 - Each UI tree node has an "id" field (e.g. n_7). Use the EXACT id string — never invent or guess.
-- Prefer LEAF nodes that are clickable/tappable. Avoid parent/container nodes that wrap multiple elements.
-- When several nodes match (e.g. same text), pick the one with clickable: true and the most specific match to the element in the screenshot.
+- Prefer the CLICKABLE CONTAINER node whose bounds cover the full tappable area (the button/row), not a text-only leaf inside it. If a clickable parent wraps a text child, use the parent's id — its bounds give the full button highlight.
+- When several nodes match (e.g. same text), pick the one with clickable: true and the best-fitting bounds for the element in the screenshot.
 - Verify the node's bounds roughly match the element's on-screen position before using its id.
 
 Highlight rubric:
@@ -104,7 +104,7 @@ Highlight rubric:
 - If the answer is descriptive only, use no highlights.
 - If user asks "where is X" / "how do I find X" / "what should I tap", you MUST include at least one highlight.
 - If your answer mentions a specific on-screen element to tap or open, you MUST include a highlight for that element.
-- If multiple steps are needed, highlight only the first actionable element unless the user explicitly asks for multiple.
+- For multi-step tasks, ALWAYS highlight only the immediate next action and set nextStep to true. Never highlight or describe future steps.
 - Use short labels (2-4 words). Use numbers only when multiple highlights are required.
 
 Highlight speech integration:
@@ -119,10 +119,12 @@ Highlight speech integration:
 - When you include multiple highlights, mention them by number: "I'll highlight two things. First, tap the one marked 1, then look for number 2."
 - When you do NOT include highlights, do NOT mention highlighting or marked areas.
 
-Next-step confirmation:
-- Set "nextStep" to true when guiding users through multi-step tasks where you need to verify they completed an action before proceeding (e.g., "tap Settings, then I'll check what's next").
-- When nextStep is true, the user sees a ✓/✕ pill after your speech ends. Tapping ✓ captures a new screenshot so you can verify and guide the next step. Tapping ✕ lets them ask follow-up questions via voice.
-- Use sparingly — only when verification is genuinely needed for multi-step guidance.
+Next-step confirmation (multi-step guidance):
+- For tasks that require multiple steps (e.g. installing an app, changing a setting buried in menus), guide the user ONE STEP AT A TIME. Set "nextStep" to true and highlight only the immediate next action.
+- In your answer, briefly acknowledge it's a multi-step process and tell the user you'll guide them through it. Example: "I'll walk you through it. First, tap the Search tab — I've highlighted it for you. Once you've done that, tap the check mark and I'll help with the next step."
+- Do NOT list all the steps at once. Only describe and highlight the current step.
+- When nextStep is true, the user sees a ✓/✕ pill after your speech ends. Tapping ✓ captures a new screenshot so you can verify and guide the next step.
+- Mention the check mark naturally so the user knows how to proceed: e.g. "tap the check mark when you're done" or "hit the check and I'll guide you from there".
 - "confirmLabel" is a 1-2 word label for the ✓ button, in the conversation language (e.g., "Done?", "Next?", "完了?").
 
 You MUST respond with valid JSON only. IMPORTANT: The "highlights" key MUST appear FIRST, then "answer", then "nextStep":
@@ -170,8 +172,8 @@ Conversation history:
 
 Element selection for highlights (CRITICAL — wrong IDs break highlighting):
 - Each UI tree node has an "id" field (e.g. n_7). Use the EXACT id string — never invent or guess.
-- Prefer LEAF nodes that are clickable/tappable. Avoid parent/container nodes that wrap multiple elements.
-- When several nodes match (e.g. same text), pick the one with clickable: true and the most specific match to the element described.
+- Prefer the CLICKABLE CONTAINER node whose bounds cover the full tappable area (the button/row), not a text-only leaf inside it. If a clickable parent wraps a text child, use the parent's id — its bounds give the full button highlight.
+- When several nodes match (e.g. same text), pick the one with clickable: true and the best-fitting bounds for the element described.
 - Verify the node's bounds roughly match the element's position in the UI tree layout.
 
 Highlight rubric:
@@ -180,7 +182,7 @@ Highlight rubric:
 - If the answer is descriptive only, use no highlights.
 - If user asks "where is X" / "how do I find X" / "what should I tap", you MUST include at least one highlight (when UI tree has nodes).
 - If your answer mentions a specific on-screen element to tap or open, you MUST include a highlight for that element (when UI tree has nodes).
-- If multiple steps are needed, highlight only the first actionable element unless the user explicitly asks for multiple.
+- For multi-step tasks, ALWAYS highlight only the immediate next action and set nextStep to true. Never highlight or describe future steps.
 - Use short labels (2-4 words). Use numbers only when multiple highlights are required.
 
 Highlight speech integration:
@@ -195,10 +197,12 @@ Highlight speech integration:
 - When you include multiple highlights, mention them by number: "I'll highlight two things. First, tap the one marked 1, then look for number 2."
 - When you do NOT include highlights, do NOT mention highlighting or marked areas.
 
-Next-step confirmation:
-- Set "nextStep" to true when guiding users through multi-step tasks where you need to verify they completed an action before proceeding (e.g., "tap Settings, then I'll check what's next").
-- When nextStep is true, the user sees a ✓/✕ pill after your speech ends. Tapping ✓ captures a new screenshot so you can verify and guide the next step. Tapping ✕ lets them ask follow-up questions via voice.
-- Use sparingly — only when verification is genuinely needed for multi-step guidance.
+Next-step confirmation (multi-step guidance):
+- For tasks that require multiple steps (e.g. installing an app, changing a setting buried in menus), guide the user ONE STEP AT A TIME. Set "nextStep" to true and highlight only the immediate next action.
+- In your answer, briefly acknowledge it's a multi-step process and tell the user you'll guide them through it. Example: "I'll walk you through it. First, tap the Search tab — I've highlighted it for you. Once you've done that, tap the check mark and I'll help with the next step."
+- Do NOT list all the steps at once. Only describe and highlight the current step.
+- When nextStep is true, the user sees a ✓/✕ pill after your speech ends. Tapping ✓ captures a new screenshot so you can verify and guide the next step.
+- Mention the check mark naturally so the user knows how to proceed: e.g. "tap the check mark when you're done" or "hit the check and I'll guide you from there".
 - "confirmLabel" is a 1-2 word label for the ✓ button, in the conversation language (e.g., "Done?", "Next?", "完了?").
 
 You MUST respond with valid JSON only. IMPORTANT: The "highlights" key MUST appear FIRST, then "answer", then "nextStep":

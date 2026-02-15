@@ -18,7 +18,7 @@ import android.text.TextUtils
 import android.util.TypedValue
 import android.view.View
 import android.view.animation.LinearInterpolator
-import com.knowmyphone.app.KypAccessibilityService
+import android.util.Log
 import com.knowmyphone.app.model.Bounds
 import com.knowmyphone.app.model.HighlightTarget
 import kotlin.math.abs
@@ -109,6 +109,7 @@ class HighlightOverlayView(context: Context) : View(context) {
     }
 
     fun setHighlights(highlights: List<HighlightTarget>) {
+        Log.d("HighlightOverlay", "setHighlights: ${highlights.size} targets, bounds=${highlights.map { "${it.elementId}:(${it.bounds})" }}")
         targets = highlights
         resolveBounds()
         startFadeIn()
@@ -129,30 +130,20 @@ class HighlightOverlayView(context: Context) : View(context) {
     }
 
     private fun resolveBounds() {
-        val accessibility = KypAccessibilityService.instance
-        val resolved = mutableListOf<Pair<HighlightTarget, RectF>>()
-
         val viewLocation = IntArray(2)
         getLocationOnScreen(viewLocation)
         val offsetX = viewLocation[0].toFloat()
         val offsetY = viewLocation[1].toFloat()
 
-        for (target in targets) {
+        resolvedBounds = targets.mapNotNull { target ->
             val bounds = target.bounds
             if (bounds != null) {
-                resolved.add(target to boundsToRectF(bounds, offsetX, offsetY))
-                continue
-            }
-
-            if (accessibility != null) {
-                val found = accessibility.findBoundsForId(target.elementId)
-                if (found != null) {
-                    resolved.add(target to boundsToRectF(found, offsetX, offsetY))
-                }
+                target to boundsToRectF(bounds, offsetX, offsetY)
+            } else {
+                Log.w("HighlightOverlay", "No bounds for ${target.elementId}, skipping")
+                null
             }
         }
-
-        resolvedBounds = resolved
     }
 
     private fun boundsToRectF(b: Bounds, offsetX: Float = 0f, offsetY: Float = 0f): RectF {
