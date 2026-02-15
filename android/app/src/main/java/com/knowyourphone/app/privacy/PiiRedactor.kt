@@ -116,6 +116,13 @@ object PiiRedactor {
             color = Color.BLACK
         }
 
+        val textPaint = Paint().apply {
+            style = Paint.Style.FILL
+            color = Color.WHITE
+            isAntiAlias = true
+            typeface = Typeface.MONOSPACE
+        }
+
         for (nr in nodeRedactions) {
             val b = nr.bounds
             // Skip zero-area or off-screen bounds
@@ -124,6 +131,26 @@ object PiiRedactor {
 
             val rect = RectF(b.left.toFloat(), b.top.toFloat(), b.right.toFloat(), b.bottom.toFloat())
             canvas.drawRect(rect, fillPaint)
+
+            // Draw white label text over the black box
+            val label = nr.matches.firstOrNull()?.type?.placeholder ?: "[REDACTED]"
+            val rectHeight = b.bottom - b.top
+            val rectWidth = b.right - b.left
+
+            // Size text to fit within the rect (70% of height, capped to fit width)
+            var textSize = (rectHeight * 0.7f).coerceAtLeast(8f)
+            textPaint.textSize = textSize
+            // Shrink if text is wider than the rect
+            val textWidth = textPaint.measureText(label)
+            if (textWidth > rectWidth - 4) {
+                textSize *= (rectWidth - 4) / textWidth
+                textPaint.textSize = textSize.coerceAtLeast(6f)
+            }
+
+            val textMetrics = textPaint.fontMetrics
+            val textY = b.top + (rectHeight - textMetrics.ascent - textMetrics.descent) / 2f
+            val textX = b.left + (rectWidth - textPaint.measureText(label)) / 2f
+            canvas.drawText(label, textX, textY, textPaint)
         }
 
         return mutable

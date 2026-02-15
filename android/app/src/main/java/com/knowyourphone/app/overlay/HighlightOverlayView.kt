@@ -58,6 +58,8 @@ class HighlightOverlayView(context: Context) : View(context) {
         invalidate()
     }
 
+    fun hasHighlights(): Boolean = targets.isNotEmpty()
+
     fun clear() {
         targets = emptyList()
         resolvedBounds = emptyList()

@@ -56,6 +56,17 @@ class OverlayService : Service() {
 
     fun getDotView(): DotView? = dotView
 
+    /**
+     * Hide or show all overlay views (dot pill, highlight, error toast).
+     * Used to keep overlays out of screenshots.
+     */
+    fun setOverlayVisibility(visible: Boolean) {
+        val visibility = if (visible) View.VISIBLE else View.INVISIBLE
+        dotView?.visibility = visibility
+        highlightView?.visibility = if (visible && highlightView?.hasHighlights() == true) View.VISIBLE else View.GONE
+        errorToastView?.visibility = visibility
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this

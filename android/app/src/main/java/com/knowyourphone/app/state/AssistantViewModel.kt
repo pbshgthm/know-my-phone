@@ -311,7 +311,7 @@ class AssistantViewModel(
                 if (_autoScreenshot.value) {
                     Log.d(TAG, "Auto-screenshot ON, capturing screenshot immediately")
                     withContext(Dispatchers.Main) {
-                        captureAndSendScreenshot(hidePill = false)
+                        captureAndSendScreenshot()
                     }
                 }
             }
@@ -458,14 +458,14 @@ class AssistantViewModel(
      */
     fun onScreenshotConfirm() {
         _state.value = AssistantState.THINKING
-        captureAndSendScreenshot(hidePill = true)
+        captureAndSendScreenshot()
     }
 
     /**
      * Capture screenshot and send to server.
-     * @param hidePill If true, wait for pill to hide before capturing. If false (auto mode), just wait briefly for UI tree.
+     * Hides all overlays before capturing to keep them out of the image.
      */
-    private fun captureAndSendScreenshot(hidePill: Boolean) {
+    private fun captureAndSendScreenshot() {
         val accessibility = KypAccessibilityService.instance
         if (accessibility == null) {
             Log.e(TAG, "Accessibility service not running")
@@ -474,22 +474,21 @@ class AssistantViewModel(
         }
 
         scope.launch(Dispatchers.Main) {
-            if (hidePill) {
-                // Wait for layout pass after hiding pill, then add buffer
-                val dot = com.knowyourphone.app.OverlayService.instance?.getDotView()
-                if (dot != null) {
-                    suspendCancellableCoroutine { cont ->
-                        dot.post { cont.resume(Unit) {} }
-                    }
-                }
-            }
-            delay(200L)
+            val overlayService = com.knowyourphone.app.OverlayService.instance
+            // Hide all overlay views so they don't appear in the screenshot
+            overlayService?.setOverlayVisibility(false)
+            // Wait for the views to actually disappear from screen
+            delay(300L)
 
             // Collect UI tree
             val uiTree = accessibility.collectUiTree()
 
             // Capture screenshot
             accessibility.captureScreenshot { bitmap ->
+                // Restore overlay immediately after capture (must run on main thread)
+                scope.launch(Dispatchers.Main) {
+                    overlayService?.setOverlayVisibility(true)
+                }
                 scope.launch(Dispatchers.IO) io@{
                     if (bitmap == null || uiTree == null) {
                         Log.e(TAG, "Failed to capture screenshot or UI tree")
