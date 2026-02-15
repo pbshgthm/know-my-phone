@@ -8,6 +8,7 @@ import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.ViewGroup
+import android.view.View.MeasureSpec
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -22,7 +23,6 @@ class PillContextMenuOverlayView(
 ) : FrameLayout(context) {
 
     companion object {
-        const val MENU_WIDTH_DP = 228f
         const val MENU_ITEM_HEIGHT_DP = 44f
         const val MENU_VERTICAL_PADDING_DP = 8f
         const val MENU_DIVIDER_DP = 1f
@@ -54,7 +54,7 @@ class PillContextMenuOverlayView(
 
         addView(
             card,
-            LayoutParams(dp(MENU_WIDTH_DP).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+            LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         )
 
         card.addView(createMenuItem(showOpenAppLabel, onShowOpenApp))
@@ -73,6 +73,13 @@ class PillContextMenuOverlayView(
         card.layoutParams = params
     }
 
+    fun measureMenu(maxWidthPx: Int): Pair<Int, Int> {
+        val widthSpec = MeasureSpec.makeMeasureSpec(maxWidthPx, MeasureSpec.AT_MOST)
+        val heightSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        card.measure(widthSpec, heightSpec)
+        return card.measuredWidth to card.measuredHeight
+    }
+
     private fun createMenuItem(label: String, onClick: () -> Unit): TextView {
         return TextView(context).apply {
             text = label
@@ -82,14 +89,15 @@ class PillContextMenuOverlayView(
             setSingleLine(true)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            textAlignment = TEXT_ALIGNMENT_VIEW_START
             setPadding(dp(14f).toInt(), 0, dp(14f).toInt(), 0)
             setOnClickListener {
                 onClick()
                 onDismiss()
             }
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
                 dp(MENU_ITEM_HEIGHT_DP).toInt()
             )
         }

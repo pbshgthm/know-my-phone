@@ -441,26 +441,7 @@ class OverlayService : Service() {
 
         val bounds = windowManager.currentWindowMetrics.bounds
         val edgeMargin = dp(8)
-        val gap = dp(8)
-        val menuWidth = dp(PillContextMenuOverlayView.MENU_WIDTH_DP)
-        val menuHeightEstimate =
-            dp(PillContextMenuOverlayView.MENU_VERTICAL_PADDING_DP) * 2 +
-                    dp(PillContextMenuOverlayView.MENU_ITEM_HEIGHT_DP) * 2 +
-                    dp(PillContextMenuOverlayView.MENU_DIVIDER_DP)
-
-        val anchorCenterX = params.x + params.width / 2
-        val menuLeft = (anchorCenterX - menuWidth / 2)
-            .coerceIn(edgeMargin, bounds.width() - menuWidth - edgeMargin)
-
-        val availableBelow = bounds.height() - (params.y + params.height) - gap - edgeMargin
-        val availableAbove = params.y - gap - edgeMargin
-        val showBelow = availableBelow >= menuHeightEstimate || availableBelow >= availableAbove
-        val rawMenuTop = if (showBelow) {
-            params.y + params.height + gap
-        } else {
-            params.y - menuHeightEstimate - gap
-        }
-        val menuTop = rawMenuTop.coerceIn(edgeMargin, bounds.height() - menuHeightEstimate - edgeMargin)
+        val gap = dp(4)
 
         val labels = LanguageManager.getPillStrings(currentLanguageCode())
         val overlay = PillContextMenuOverlayView(
@@ -470,9 +451,26 @@ class OverlayService : Service() {
             onShowOpenApp = { openMainApp() },
             onCloseApp = { hideOverlay() },
             onDismiss = { dismissContextMenu() }
-        ).apply {
-            placeMenu(menuLeft, menuTop)
+        )
+
+        val maxMenuWidth = (bounds.width() - edgeMargin * 2).coerceAtLeast(1)
+        val (menuWidth, menuHeight) = overlay.measureMenu(maxMenuWidth)
+
+        val anchorRight = params.x + params.width
+        val maxMenuLeft = bounds.width() - menuWidth - edgeMargin
+        val menuLeft = (anchorRight - menuWidth).coerceIn(edgeMargin, maxMenuLeft.coerceAtLeast(edgeMargin))
+
+        val availableBelow = bounds.height() - (params.y + params.height) - gap - edgeMargin
+        val availableAbove = params.y - gap - edgeMargin
+        val showBelow = availableBelow >= menuHeight || availableBelow >= availableAbove
+        val rawMenuTop = if (showBelow) {
+            params.y + params.height + gap
+        } else {
+            params.y - menuHeight - gap
         }
+        val maxMenuTop = (bounds.height() - menuHeight - edgeMargin).coerceAtLeast(edgeMargin)
+        val menuTop = rawMenuTop.coerceIn(edgeMargin, maxMenuTop)
+        overlay.placeMenu(menuLeft, menuTop)
 
         val menuParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
