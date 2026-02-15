@@ -98,6 +98,10 @@ class OverlayService : Service() {
         viewModel.setLanguage(languageCode)
     }
 
+    fun setAutoScreenshot(enabled: Boolean) {
+        viewModel.setAutoScreenshot(enabled)
+    }
+
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,

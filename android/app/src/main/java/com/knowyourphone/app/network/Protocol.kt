@@ -41,6 +41,11 @@ data class CancelMessage(
     val type: String = "cancel"
 )
 
+data class SetAutoScreenshotMessage(
+    val type: String = "set_auto_screenshot",
+    val enabled: Boolean
+)
+
 // --- Server -> Client messages ---
 
 sealed class ServerMessage {

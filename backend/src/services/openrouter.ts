@@ -1,7 +1,7 @@
 import {
-  TRIAGE_SYSTEM_PROMPT,
-  VISUAL_ANALYSIS_SYSTEM_PROMPT,
-  TEXT_ANALYSIS_SYSTEM_PROMPT,
+  getTriagePrompt,
+  getVisualAnalysisPrompt,
+  getTextAnalysisPrompt,
 } from "../prompts.js";
 import type {
   TriageResult,
@@ -95,10 +95,11 @@ function parseJSON<T>(raw: string): T {
 export async function triageQuery(
   userText: string,
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  autoScreenshot: boolean = false
 ): Promise<{ needsScreenshot: boolean; reason: string }> {
   const messages: ChatMessage[] = [
-    { role: "system", content: TRIAGE_SYSTEM_PROMPT },
+    { role: "system", content: getTriagePrompt(autoScreenshot) },
     ...conversationHistory.map((h) => ({
       role: h.role as "user" | "assistant",
       content: h.content,
@@ -119,10 +120,11 @@ export async function visualAnalysis(
   screenshotBase64: string,
   uiTree: UiTree,
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  autoScreenshot: boolean = false
 ): Promise<AnalysisResult> {
   const messages: ChatMessage[] = [
-    { role: "system", content: VISUAL_ANALYSIS_SYSTEM_PROMPT },
+    { role: "system", content: getVisualAnalysisPrompt(autoScreenshot) },
     ...conversationHistory.map((h) => ({
       role: h.role as "user" | "assistant",
       content: h.content,
@@ -152,10 +154,11 @@ export async function textAnalysis(
   userText: string,
   uiTree: UiTree,
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  autoScreenshot: boolean = false
 ): Promise<AnalysisResult> {
   const messages: ChatMessage[] = [
-    { role: "system", content: TEXT_ANALYSIS_SYSTEM_PROMPT },
+    { role: "system", content: getTextAnalysisPrompt(autoScreenshot) },
     ...conversationHistory.map((h) => ({
       role: h.role as "user" | "assistant",
       content: h.content,

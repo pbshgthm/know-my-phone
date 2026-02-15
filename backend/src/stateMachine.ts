@@ -39,6 +39,7 @@ interface PendingScreenshotRequest {
   userText: string;
   reason: string;
   timer: ReturnType<typeof setTimeout>;
+  bufferedScreenshot?: ScreenshotResponseMessage;
 }
 
 const pendingScreenshots = new Map<string, PendingScreenshotRequest>();
@@ -96,6 +97,25 @@ export async function handleAudioReceived(
   console.log(`[${session.id}] 🎬 Starting audio processing pipeline`);
   console.log(`${'='.repeat(60)}\n`);
 
+  // If auto-screenshot, create pending entry BEFORE STT so the client's
+  // screenshot_response (sent immediately after audio) can be buffered.
+  if (session.autoScreenshot) {
+    const timer = setTimeout(() => {
+      if (pendingScreenshots.has(session.id)) {
+        pendingScreenshots.delete(session.id);
+        console.warn(`[${session.id}] ⏰ Auto-screenshot timed out after 30s`);
+        sendError(ws, "Screenshot capture timed out.");
+      }
+    }, 30_000);
+
+    pendingScreenshots.set(session.id, {
+      userText: "",
+      reason: "auto-screenshot",
+      timer,
+    });
+    console.log(`[${session.id}] 📸 Auto-screenshot ON — pending entry created before STT`);
+  }
+
   try {
     // Step 1: STT
     console.log(`[${session.id}] 📝 Step 1/4: Transcribing audio (${audioBuffer.length} bytes)...`);
@@ -107,6 +127,12 @@ export async function handleAudioReceived(
 
     if (!transcript || transcript.trim().length === 0) {
       console.warn(`[${session.id}] ⚠️  Empty transcript, sending error to client`);
+      // Clean up auto-screenshot pending entry
+      const pending = pendingScreenshots.get(session.id);
+      if (pending) {
+        clearTimeout(pending.timer);
+        pendingScreenshots.delete(session.id);
+      }
       sendError(ws, "Could not understand audio. Please try again.");
       return;
     }
@@ -115,12 +141,38 @@ export async function handleAudioReceived(
     console.log(`[${session.id}] 📤 Sending transcript to client`);
     sendJSON(ws, { type: "transcript", text: transcript });
 
+    // Auto-screenshot mode: update pending entry with transcript, check if screenshot already arrived
+    if (session.autoScreenshot) {
+      const pending = pendingScreenshots.get(session.id);
+      if (pending) {
+        pending.userText = transcript;
+        if (pending.bufferedScreenshot) {
+          // Screenshot arrived during STT — process immediately
+          console.log(`[${session.id}] 📸 Buffered screenshot found, running visual analysis...`);
+          clearTimeout(pending.timer);
+          const msg = pending.bufferedScreenshot;
+          pendingScreenshots.delete(session.id);
+          const result = await visualAnalysis(
+            transcript,
+            msg.screenshot,
+            msg.uiTree,
+            getHistoryForLLM(session),
+            signal,
+            session.autoScreenshot
+          );
+          await sendAnswer(ws, session, result, signal, transcript);
+        }
+        // else: screenshot not yet arrived, handleScreenshotResponse will pick it up
+      }
+      return;
+    }
+
     // Step 2: Triage - does this need a screenshot?
     // NOTE: User message is NOT added to history yet to avoid duplication
     // (triage and analysis functions append the user message themselves)
     console.log(`[${session.id}] 🤔 Step 2/4: Running triage query...`);
     const startTriage = Date.now();
-    const triage = await triageQuery(transcript, getHistoryForLLM(session), signal);
+    const triage = await triageQuery(transcript, getHistoryForLLM(session), signal, session.autoScreenshot);
     const triageTime = Date.now() - startTriage;
     console.log(`[${session.id}] ✅ Triage complete (${triageTime}ms)`);
     console.log(`[${session.id}] 🔍 Triage result: needsScreenshot=${triage.needsScreenshot}, reason="${triage.reason}"`);
@@ -163,7 +215,8 @@ export async function handleAudioReceived(
       transcript,
       emptyUiTree,
       getHistoryForLLM(session),
-      signal
+      signal,
+      session.autoScreenshot
     );
     const analysisTime = Date.now() - startAnalysis;
     console.log(`[${session.id}] ✅ Analysis complete (${analysisTime}ms)`);
@@ -192,6 +245,14 @@ export async function handleScreenshotResponse(
     sendError(ws, "No pending screenshot request.");
     return;
   }
+
+  // If STT hasn't completed yet (auto-screenshot mode), buffer the screenshot
+  if (!pending.userText) {
+    console.log(`[${session.id}] 📸 STT still running, buffering screenshot...`);
+    pending.bufferedScreenshot = message;
+    return;
+  }
+
   clearTimeout(pending.timer);
   pendingScreenshots.delete(session.id);
 
@@ -209,7 +270,8 @@ export async function handleScreenshotResponse(
       message.screenshot,
       message.uiTree,
       getHistoryForLLM(session),
-      signal
+      signal,
+      session.autoScreenshot
     );
 
     await sendAnswer(ws, session, result, signal, pending.userText);
@@ -251,7 +313,8 @@ export async function handleScreenshotDeclined(
       pending.userText,
       emptyUiTree,
       getHistoryForLLM(session),
-      signal
+      signal,
+      session.autoScreenshot
     );
 
     await sendAnswer(ws, session, result, signal, pending.userText);

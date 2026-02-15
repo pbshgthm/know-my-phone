@@ -125,6 +125,56 @@ class MainActivity : AppCompatActivity() {
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = dp(16) })
 
+        // Auto-share screen toggle
+        val autoShareRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        val autoShareLabel = TextView(this).apply {
+            text = "Auto-share screen"
+            textSize = 15f
+            setTextColor(0xFF222222.toInt())
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val autoShareToggle = TextView(this)
+        val prefs0 = getSharedPreferences("kyp_prefs", MODE_PRIVATE)
+        var autoShareOn = prefs0.getBoolean("auto_screenshot", false)
+
+        fun styleAutoShareToggle() {
+            autoShareToggle.text = if (autoShareOn) "ON" else "OFF"
+            autoShareToggle.textSize = 13f
+            autoShareToggle.gravity = Gravity.CENTER
+            autoShareToggle.setPadding(dp(16), dp(8), dp(16), dp(8))
+            if (autoShareOn) {
+                autoShareToggle.setTextColor(Color.WHITE)
+                autoShareToggle.background = GradientDrawable().apply {
+                    cornerRadius = dp(10).toFloat()
+                    setColor(0xFF111111.toInt())
+                }
+            } else {
+                autoShareToggle.setTextColor(0xFF222222.toInt())
+                autoShareToggle.background = GradientDrawable().apply {
+                    cornerRadius = dp(10).toFloat()
+                    setStroke(dp(1), 0x22000000)
+                    setColor(Color.TRANSPARENT)
+                }
+            }
+        }
+        styleAutoShareToggle()
+        autoShareToggle.setOnClickListener {
+            autoShareOn = !autoShareOn
+            prefs0.edit().putBoolean("auto_screenshot", autoShareOn).apply()
+            styleAutoShareToggle()
+            OverlayService.instance?.setAutoScreenshot(autoShareOn)
+        }
+        autoShareRow.addView(autoShareLabel)
+        autoShareRow.addView(autoShareToggle)
+        root.addView(autoShareRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(16) })
+
         // Permissions (only show missing)
         permissionsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

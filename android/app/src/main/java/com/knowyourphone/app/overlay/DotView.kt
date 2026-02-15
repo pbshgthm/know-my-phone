@@ -67,9 +67,26 @@ class DotView(context: Context) : View(context) {
         color = COLOR_BORDER
     }
 
+    private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val circleStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dp(2f)
+    }
+
     private val statusDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
+
+    // State-specific circle colors
+    private val circleColorIdle = 0xFF9CA3AF.toInt()
+    private val circleColorListening = 0xFF3B82F6.toInt()
+    private val circleColorThinking = 0xFF8B5CF6.toInt()
+    private val circleColorNeedScreenshot = 0xFF22C55E.toInt()
+    private val circleColorSpeaking = 0xFF111827.toInt()
+    private val circleColorX = 0xFFEF4444.toInt()
 
     private var currentState = AssistantState.IDLE
     private var connectionState = ConnectionState.CONNECTED
@@ -158,6 +175,7 @@ class DotView(context: Context) : View(context) {
 
     fun setState(state: AssistantState) {
         currentState = state
+        // Icon paint color is now only used for equalizer bars in center zone
         iconPaint.color = if (state == AssistantState.IDLE) COLOR_ICON_MUTED else COLOR_ICON
 
         loaderAnimator.cancel()
@@ -255,43 +273,51 @@ class DotView(context: Context) : View(context) {
 
         val centerY = rect.centerY()
 
-        // --- Left zone: X button ---
-        val xCenterX = rect.left + pillRadius
-        xButtonRect.set(
-            rect.left,
-            rect.top,
-            rect.left + pillHeight,
-            rect.bottom
-        )
-        drawLucide(canvas, xPaths, xCenterX, centerY, 16f, 0f, if (currentState == AssistantState.IDLE) 100 else 180)
-
-        // --- Right zone: state-specific icon ---
-        val rightCenterX = rect.right - pillRadius
+        // --- Left zone: state-specific icon in colored circle ---
+        val leftCenterX = rect.left + pillRadius
         confirmRect.setEmpty()
+
+        val stateCircleColor = when (currentState) {
+            AssistantState.IDLE -> circleColorIdle
+            AssistantState.LISTENING -> circleColorListening
+            AssistantState.THINKING -> circleColorThinking
+            AssistantState.NEED_SCREENSHOT -> circleColorNeedScreenshot
+            AssistantState.SPEAKING -> circleColorSpeaking
+        }
 
         when (currentState) {
             AssistantState.IDLE -> {
-                drawLucide(canvas, micPaths, rightCenterX, centerY, ICON_SIZE_DP, 0f, 140)
+                drawIconInCircle(canvas, micPaths, leftCenterX, centerY, ICON_SIZE_DP, 0f, stateCircleColor, filled = true)
             }
             AssistantState.LISTENING -> {
-                drawLucide(canvas, micPaths, rightCenterX, centerY, ICON_SIZE_DP, 0f, 255)
+                drawIconInCircle(canvas, micPaths, leftCenterX, centerY, ICON_SIZE_DP, 0f, stateCircleColor, filled = true)
             }
             AssistantState.THINKING -> {
-                drawLucide(canvas, loaderPaths, rightCenterX, centerY, ICON_SIZE_DP, loaderRotation, 255)
+                drawIconInCircle(canvas, loaderPaths, leftCenterX, centerY, ICON_SIZE_DP, loaderRotation, stateCircleColor, filled = true)
             }
             AssistantState.NEED_SCREENSHOT -> {
                 confirmRect.set(
-                    rect.right - pillHeight,
+                    rect.left,
                     rect.top,
-                    rect.right,
+                    rect.left + pillHeight,
                     rect.bottom
                 )
-                drawLucide(canvas, checkPaths, rightCenterX, centerY, ICON_SIZE_DP, 0f, 255)
+                drawIconInCircle(canvas, checkPaths, leftCenterX, centerY, ICON_SIZE_DP, 0f, stateCircleColor, filled = true)
             }
             AssistantState.SPEAKING -> {
-                drawLucide(canvas, sparklesPaths, rightCenterX, centerY, ICON_SIZE_DP, 0f, 255)
+                drawIconInCircle(canvas, sparklesPaths, leftCenterX, centerY, ICON_SIZE_DP, 0f, stateCircleColor, filled = true)
             }
         }
+
+        // --- Right zone: X button in red outline circle ---
+        val rightCenterX = rect.right - pillRadius
+        xButtonRect.set(
+            rect.right - pillHeight,
+            rect.top,
+            rect.right,
+            rect.bottom
+        )
+        drawIconInCircle(canvas, xPaths, rightCenterX, centerY, 14f, 0f, circleColorX, filled = false, circleRadiusOverride = dp(14f))
 
         // --- Center zone: text or dynamic EQ ---
         val centerZoneLeft = rect.left + pillHeight + dp(4f)
@@ -355,6 +381,56 @@ class DotView(context: Context) : View(context) {
         }
         canvas.restore()
         iconPaint.alpha = 255
+    }
+
+    private fun drawIconInCircle(
+        canvas: Canvas,
+        paths: List<Path>,
+        cx: Float,
+        cy: Float,
+        sizeDp: Float,
+        rotation: Float,
+        circleColor: Int,
+        filled: Boolean,
+        circleRadiusOverride: Float = 0f
+    ) {
+        val circleRadius = if (circleRadiusOverride > 0f) circleRadiusOverride else dp(PILL_HEIGHT_DP) / 2f - dp(4f)
+
+        if (filled) {
+            circlePaint.color = circleColor
+            canvas.drawCircle(cx, cy, circleRadius, circlePaint)
+        } else {
+            circleStrokePaint.color = circleColor
+            canvas.drawCircle(cx, cy, circleRadius, circleStrokePaint)
+        }
+
+        // Draw icon: white on filled circles, circle color on outline circles
+        val sizePx = dp(sizeDp)
+        val scale = sizePx / 24f
+        val left = cx - sizePx / 2f
+        val top = cy - sizePx / 2f
+
+        val savedColor = iconPaint.color
+        val savedAlpha = iconPaint.alpha
+        iconPaint.color = if (filled) Color.WHITE else circleColor
+        iconPaint.alpha = 255
+
+        canvas.save()
+        if (rotation != 0f) {
+            canvas.rotate(rotation, cx, cy)
+        }
+        tempMatrix.reset()
+        tempMatrix.setScale(scale, scale)
+        tempMatrix.postTranslate(left, top)
+        for (p in paths) {
+            tempPath.set(p)
+            tempPath.transform(tempMatrix)
+            canvas.drawPath(tempPath, iconPaint)
+        }
+        canvas.restore()
+
+        iconPaint.color = savedColor
+        iconPaint.alpha = savedAlpha
     }
 
     private fun statusText(): String {

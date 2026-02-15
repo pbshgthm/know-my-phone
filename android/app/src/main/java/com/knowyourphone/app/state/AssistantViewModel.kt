@@ -46,11 +46,19 @@ class AssistantViewModel(
     private val _reconnecting = MutableStateFlow(false)
     val reconnecting: StateFlow<Boolean> = _reconnecting
 
+    private val _autoScreenshot = MutableStateFlow(false)
+    val autoScreenshot: StateFlow<Boolean> = _autoScreenshot
+
     private val audioRecorder = AudioRecorder()
     private val audioPlayer = AudioPlayer(context)
 
     private var sessionId: String = UUID.randomUUID().toString()
     private var languageCode: String = getPreferredLanguageCode()
+
+    init {
+        _autoScreenshot.value = context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
+            .getBoolean("auto_screenshot", false)
+    }
 
     // The binary frame we expect after an "answer" text frame
     // Both fields set synchronously on OkHttp reader thread to avoid race with binary frame
@@ -73,6 +81,7 @@ class AssistantViewModel(
             }
             sendHello()
             sendLanguage()
+            sendAutoScreenshotSetting()
             Log.d(TAG, "Connected to server")
         },
         onDisconnected = {
@@ -245,6 +254,12 @@ class AssistantViewModel(
                 }
             } else {
                 Log.d(TAG, "Sent audio: ${wavData.size} bytes WAV")
+                if (_autoScreenshot.value) {
+                    Log.d(TAG, "Auto-screenshot ON, capturing screenshot immediately")
+                    withContext(Dispatchers.Main) {
+                        captureAndSendScreenshot(hidePill = false)
+                    }
+                }
             }
         }
     }
@@ -364,7 +379,14 @@ class AssistantViewModel(
      */
     fun onScreenshotConfirm() {
         _state.value = AssistantState.THINKING
+        captureAndSendScreenshot(hidePill = true)
+    }
 
+    /**
+     * Capture screenshot and send to server.
+     * @param hidePill If true, wait for pill to hide before capturing. If false (auto mode), just wait briefly for UI tree.
+     */
+    private fun captureAndSendScreenshot(hidePill: Boolean) {
         val accessibility = KypAccessibilityService.instance
         if (accessibility == null) {
             Log.e(TAG, "Accessibility service not running")
@@ -373,12 +395,13 @@ class AssistantViewModel(
         }
 
         scope.launch(Dispatchers.Main) {
-            // Wait for layout pass after hiding pill, then add buffer
-            val dot = com.knowyourphone.app.OverlayService.instance?.getDotView()
-            if (dot != null) {
-                // Use post to wait for next layout pass
-                suspendCancellableCoroutine { cont ->
-                    dot.post { cont.resume(Unit) {} }
+            if (hidePill) {
+                // Wait for layout pass after hiding pill, then add buffer
+                val dot = com.knowyourphone.app.OverlayService.instance?.getDotView()
+                if (dot != null) {
+                    suspendCancellableCoroutine { cont ->
+                        dot.post { cont.resume(Unit) {} }
+                    }
                 }
             }
             delay(200L)
@@ -449,6 +472,17 @@ class AssistantViewModel(
     fun setLanguage(code: String) {
         languageCode = code
         sendLanguage()
+    }
+
+    fun setAutoScreenshot(enabled: Boolean) {
+        _autoScreenshot.value = enabled
+        context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("auto_screenshot", enabled).apply()
+        sendAutoScreenshotSetting()
+    }
+
+    private fun sendAutoScreenshotSetting() {
+        wsClient.sendText(MessageParser.toJson(SetAutoScreenshotMessage(enabled = _autoScreenshot.value)))
     }
 
     private fun getPreferredLanguageCode(): String {

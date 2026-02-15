@@ -9,6 +9,7 @@ export interface Session {
   conversationHistory: ConversationEntry[];
   createdAt: number;
   languageCode: string;
+  autoScreenshot: boolean;
 }
 
 const sessions = new Map<string, Session>();
@@ -19,6 +20,7 @@ export function createSession(id: string): Session {
     conversationHistory: [],
     createdAt: Date.now(),
     languageCode: "en",
+    autoScreenshot: false,
   };
   sessions.set(id, session);
   return session;

@@ -111,3 +111,28 @@ You MUST respond with valid JSON only:
 }
 
 The highlights array can be empty only if no specific UI element needs highlighting or the UI tree is empty. Return only elementId and label — the client will look up bounds from the accessibility tree. Keep labels short (2-4 words).`;
+
+// Auto-share context appendices
+const AUTO_SHARE_VISUAL_NOTE = `\n\nNote: The user has auto-share enabled — the screenshot was captured automatically with their voice input. No need to explain why you're looking at the screen.`;
+
+const AUTO_SHARE_TRIAGE_NOTE = `\n\nNote: The user has manual screenshot sharing mode. If you determine a screenshot is needed, provide a clear, spoken reason so the user understands why you're asking to see their screen.`;
+
+const AUTO_SHARE_TEXT_NOTE = `\n\nNote: The user has manual screenshot sharing mode. If you need screen data to answer properly, explain clearly why seeing the screen would help.`;
+
+export function getVisualAnalysisPrompt(autoScreenshot: boolean): string {
+  return autoScreenshot
+    ? VISUAL_ANALYSIS_SYSTEM_PROMPT + AUTO_SHARE_VISUAL_NOTE
+    : VISUAL_ANALYSIS_SYSTEM_PROMPT;
+}
+
+export function getTriagePrompt(autoScreenshot: boolean): string {
+  return autoScreenshot
+    ? TRIAGE_SYSTEM_PROMPT
+    : TRIAGE_SYSTEM_PROMPT + AUTO_SHARE_TRIAGE_NOTE;
+}
+
+export function getTextAnalysisPrompt(autoScreenshot: boolean): string {
+  return autoScreenshot
+    ? TEXT_ANALYSIS_SYSTEM_PROMPT
+    : TEXT_ANALYSIS_SYSTEM_PROMPT + AUTO_SHARE_TEXT_NOTE;
+}

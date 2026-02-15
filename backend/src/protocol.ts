@@ -47,6 +47,11 @@ export interface CancelMessage {
   type: "cancel";
 }
 
+export interface SetAutoScreenshotMessage {
+  type: "set_auto_screenshot";
+  enabled: boolean;
+}
+
 export type ClientMessage =
   | AudioDataMessage
   | HelloMessage
@@ -54,7 +59,8 @@ export type ClientMessage =
   | SetLanguageMessage
   | ScreenshotResponseMessage
   | ScreenshotDeclinedMessage
-  | CancelMessage;
+  | CancelMessage
+  | SetAutoScreenshotMessage;
 
 // Server -> Client messages
 

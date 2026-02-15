@@ -167,6 +167,12 @@ function handleMessage(
       });
       break;
 
+    case "set_auto_screenshot": {
+      state.session.autoScreenshot = typeof parsed.enabled === "boolean" ? parsed.enabled : false;
+      console.log(`[WS] 📸 Session ${state.session.id}: autoScreenshot=${state.session.autoScreenshot}`);
+      break;
+    }
+
     default:
       console.warn(`[WS] ⚠️  Session ${state.session.id}: Unknown message type: ${parsed.type}`);
       ws.send(
