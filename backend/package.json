@@ -11,6 +11,9 @@
     "test:watch": "NODE_OPTIONS='--experimental-vm-modules --no-warnings' jest --watch"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.44",
+    "@ai-sdk/google": "^3.0.29",
+    "ai": "^6.0.86",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "uuid": "^10.0.0",

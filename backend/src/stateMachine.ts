@@ -11,7 +11,7 @@ import {
   triageQuery,
   streamVisualAnalysis,
   streamTextAnalysis,
-} from "./services/openrouter.js";
+} from "./services/llm.js";
 import {
   initConversation,
   startTurn,

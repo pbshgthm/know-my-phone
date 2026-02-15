@@ -13,7 +13,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design.
 └─────────────┘                    └──────────────┘
      │                                     │
      ├─ Overlay UI (pill)                 ├─ ElevenLabs STT
-     ├─ Audio recording                   ├─ OpenRouter LLM
+     ├─ Audio recording                   ├─ AI SDK LLM (Anthropic/Google)
      ├─ Accessibility tree                └─ ElevenLabs TTS
      └─ Screenshot capture
 ```
@@ -35,13 +35,14 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design.
    ```
 
    Required API keys:
-   - `OPENROUTER_API_KEY` - For LLM inference (default: GPT-5.2, configurable)
+   - `ANTHROPIC_API_KEY` - For LLM inference with Anthropic models
    - `ELEVENLABS_API_KEY` - For speech-to-text and text-to-speech
    - `ELEVENLABS_VOICE_ID` - Voice ID (default: Rachel)
 
    Optional model configuration:
-   - `LLM_TEXT_MODEL` - Model for text triage/analysis (default: `openai/gpt-5.2`)
-   - `LLM_VISION_MODEL` - Model for visual analysis (default: `openai/gpt-5.2`)
+   - `GOOGLE_GENERATIVE_AI_API_KEY` - Required only when using `google/*` models
+   - `LLM_TEXT_MODEL` - Model for text triage/analysis (default: `anthropic/claude-4.5-haiku`)
+   - `LLM_VISION_MODEL` - Model for visual analysis (default: `anthropic/claude-4.5-haiku`)
    - `ELEVENLABS_STREAMING_MODEL` - Global TTS model ID (default: `eleven_v3`)
    - `ELEVENLABS_VOICE_ID_EN|TA|HI|KN|TE|ML` - Per-language TTS voice IDs
    - `ELEVENLABS_STREAMING_MODEL_EN|TA|HI|KN|TE|ML` - Per-language TTS model IDs
@@ -188,16 +189,16 @@ The backend maintains conversation context:
 
 The backend uses two separate API services:
 - **ElevenLabs API** - STT + TTS (speech recognition and speech synthesis)
-- **OpenRouter API** - LLM inference (text triage and multimodal visual analysis)
+- **AI SDK** - Provider abstraction for LLM inference (Anthropic/Google; text triage + multimodal visual analysis)
 
-The default LLM model is `openai/gpt-5.2`, configurable via `LLM_TEXT_MODEL` and `LLM_VISION_MODEL` environment variables.
+The default LLM model is `anthropic/claude-4.5-haiku`, configurable via `LLM_TEXT_MODEL` and `LLM_VISION_MODEL` environment variables.
 
 ## Technical Notes
 
 ### Backend
 - TypeScript type checking: `npx tsc --noEmit`
 - Android client sends WAV audio with a 44-byte header for backend STT uploads
-- Default LLM model: `openai/gpt-5.2` (configurable via `LLM_TEXT_MODEL` and `LLM_VISION_MODEL`)
+- Default LLM model: `anthropic/claude-4.5-haiku` (configurable via `LLM_TEXT_MODEL` and `LLM_VISION_MODEL`)
 - Text and vision analysis use the same configurable model
 
 ### Android
@@ -224,7 +225,7 @@ know-your-phone/
 │   │   ├── protocol.ts      # Message types
 │   │   ├── prompts.ts       # LLM system prompts
 │   │   ├── services/
-│   │   │   ├── openrouter.ts # OpenRouter LLM (triage + vision)
+│   │   │   ├── llm.ts        # AI SDK LLM (triage + vision)
 │   │   │   └── elevenlabs.ts # ElevenLabs STT + TTS
 │   │   └── __tests__/       # Jest tests
 │   └── package.json

@@ -251,11 +251,9 @@ class AssistantViewModel(
                 _state.value = AssistantState.IDLE
             }
             AssistantState.CONFIRMING -> {
-                sendCancel()
                 _state.value = AssistantState.IDLE
             }
             AssistantState.SPEAKING -> {
-                sendCancel()
                 stopStreamingPlayer()
         
                 _inputLevel.value = 0f

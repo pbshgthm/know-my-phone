@@ -54,7 +54,7 @@ An Android voice assistant that helps users understand what's on their screen an
 │  └──────────────────┬───────────────────┘   │
 │                     │                        │
 │  ┌───────────┐ ┌─────┴─────┐ ┌───────────┐ │
-│  │ElevenLabs │ │ OpenRouter │ │ElevenLabs │ │
+│  │ElevenLabs │ │  AI SDK    │ │ElevenLabs │ │
 │  │   (STT)   │ │   (LLM)   │ │   (TTS)   │ │
 │  └───────────┘ └───────────┘ └───────────┘ │
 └──────────────────────────────────────────────┘
@@ -78,7 +78,7 @@ know-your-phone/
 │       ├── protocol.ts           # Message type definitions
 │       ├── prompts.ts            # LLM system prompts (triage + visual analysis)
 │       └── services/
-│           ├── openrouter.ts     # OpenRouter LLM (triage + multimodal)
+│           ├── llm.ts            # AI SDK LLM (triage + multimodal)
 │           └── elevenlabs.ts     # ElevenLabs STT + TTS
 └── android/
     └── app/src/main/
@@ -191,7 +191,7 @@ Interruption (tap dot to cancel and start new recording):
 
 ### Backend
 - **STT**: ElevenLabs API (WAV input)
-- **LLM**: OpenRouter API for both text triage and multimodal visual analysis
+- **LLM**: AI SDK provider abstraction (Anthropic/Google) for text triage and multimodal visual analysis
 - **TTS**: ElevenLabs API (MP3 output)
 - **Sessions**: Per-WebSocket-connection conversation history
 
@@ -205,14 +205,14 @@ Interruption (tap dot to cancel and start new recording):
 
 ### Cancellation
 - Client sends `{"type":"cancel"}` to abort in-flight requests
-- Backend uses per-session `AbortController` — signals propagate to all API calls (ElevenLabs STT/TTS and OpenRouter)
+- Backend uses per-session `AbortController` — signals propagate to all API calls (ElevenLabs STT/TTS and LLM)
 - New audio automatically cancels any previous in-flight request for the same session
 - Server responds with `{"type":"cancelled"}` to acknowledge
 
 ### API Timeouts
 - ElevenLabs STT: 30s
-- OpenRouter triage: 15s
-- OpenRouter analysis: 30s
+- LLM triage: 15s
+- LLM analysis: 30s
 - ElevenLabs TTS: 15s
 - Pending screenshot requests: 60s TTL
 
@@ -221,7 +221,7 @@ Interruption (tap dot to cancel and start new recording):
 - Auto-dismisses after 3s (1.5s for "Connected" messages)
 - Error sources: connection lost, reconnecting, mic unavailable, send failed, server errors, TTS failure
 - TTS failure sends `hasAudio: false` — Android skips audio wait, goes directly to highlights/idle
-- Backend validates OpenRouter response fields before accessing
+- Backend validates LLM response fields before accessing
 
 ### Graceful Shutdown
 - SIGTERM/SIGINT closes all WebSocket connections with code 1001 ("going away")

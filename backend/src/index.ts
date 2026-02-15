@@ -58,7 +58,10 @@ server.listen(PORT, () => {
   console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
   console.log('='.repeat(60));
   console.log(`📋 Environment:`);
-  console.log(`   OPENROUTER_API_KEY: ${process.env.OPENROUTER_API_KEY ? '✓ Set' : '✗ Missing'}`);
+  console.log(`   ANTHROPIC_API_KEY: ${process.env.ANTHROPIC_API_KEY ? '✓ Set' : '✗ Missing'}`);
+  console.log(`   GOOGLE_GENERATIVE_AI_API_KEY: ${process.env.GOOGLE_GENERATIVE_AI_API_KEY ? '✓ Set' : '✗ Missing'}`);
+  console.log(`   LLM_TEXT_MODEL: ${process.env.LLM_TEXT_MODEL || 'anthropic/claude-4.5-haiku (default)'}`);
+  console.log(`   LLM_VISION_MODEL: ${process.env.LLM_VISION_MODEL || 'anthropic/claude-4.5-haiku (default)'}`);
   console.log(`   ELEVENLABS_API_KEY: ${process.env.ELEVENLABS_API_KEY ? '✓ Set' : '✗ Missing'}`);
   console.log(`   ELEVENLABS_STT_MODEL_ID: ${process.env.ELEVENLABS_STT_MODEL_ID || 'scribe_v2 (default)'}`);
   console.log('='.repeat(60));
