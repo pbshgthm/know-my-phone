@@ -14,7 +14,6 @@ import {
   cancelSession,
   cleanupSession,
 } from "./stateMachine.js";
-import { initConversation } from "./dataStore.js";
 
 interface ClientState {
   session: Session;
@@ -129,10 +128,6 @@ function handleMessage(
         androidVersion: di.androidVersion,
       };
       console.log(`[WS] Device: ${di.manufacturer} ${di.model}, Android ${di.androidVersion}`);
-      // Initialize conversation data on disk
-      initConversation(clientId, state.session.conversationId, state.session.languageCode, state.session.deviceInfo!).catch((err) => {
-        console.error(`[WS] Failed to init conversation on disk:`, err);
-      });
       break;
     }
 

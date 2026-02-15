@@ -119,18 +119,32 @@ export function cancelSession(ws: WebSocket, sessionId: string): void {
 }
 
 /**
- * Apply the 30-minute inactivity check. If triggered, creates a new
- * conversation and initialises it on disk.
+ * Returns device info for datastore records.
+ * Falls back to placeholders if audio somehow arrives before hello.
  */
-async function applyInactivityCheck(session: Session): Promise<void> {
+function getSessionDeviceInfo(session: Session): { manufacturer: string; model: string; androidVersion: string } {
+  return session.deviceInfo ?? {
+    manufacturer: "unknown",
+    model: "unknown",
+    androidVersion: "unknown",
+  };
+}
+
+/**
+ * Apply the 30-minute inactivity check.
+ * Returns true when a new conversation was started and initialized.
+ */
+async function applyInactivityCheck(session: Session): Promise<boolean> {
   if (checkInactivityReset(session)) {
     await initConversation(
       session.clientId,
       session.conversationId,
       session.languageCode,
-      session.deviceInfo!
+      getSessionDeviceInfo(session)
     );
+    return true;
   }
+  return false;
 }
 
 export async function handleAudioReceived(
@@ -149,29 +163,7 @@ export async function handleAudioReceived(
   // Create a fresh AbortController for this request (aborts any previous)
   const controller = resetSessionAbort(session.id);
   const signal = controller.signal;
-
-  // --- Auto session boundary: 30-minute inactivity check ---
-  await applyInactivityCheck(session);
-
-  // Increment turn counter and start tracking this turn
-  session.turnCounter++;
-  session.currentTurnId = session.turnCounter;
-  const turnId = session.currentTurnId;
-
-  console.log(`\n${'='.repeat(60)}`);
-  console.log(`[${session.id}] Starting audio processing pipeline (turn #${turnId}, conv=${session.conversationId})`);
-  console.log(`${'='.repeat(60)}\n`);
-
-  // Save turn and audio to disk (fire and forget)
-  startTurn(session.clientId, session.conversationId, turnId, {
-    autoScreenshot: session.autoScreenshot,
-  }).catch((err) => console.error(`[DataStore] Failed to start turn:`, err));
-
-  saveAudioInput(session.clientId, session.conversationId, turnId, audioBuffer)
-    .then((file) =>
-      updateTurn(session.clientId, session.conversationId, turnId, { input: { audioFile: file } })
-    )
-    .catch((err) => console.error(`[DataStore] Failed to save audio input:`, err));
+  const audioReceivedAt = new Date().toISOString();
 
   // If auto-screenshot, create pending entry BEFORE STT so the client's
   // screenshot_response (sent immediately after audio) can be buffered.
@@ -195,9 +187,10 @@ export async function handleAudioReceived(
   try {
     // Step 1: STT
     console.log(`[${session.id}] Step 1: Transcribing audio (${audioBuffer.length} bytes)...`);
-    saveTiming(session.clientId, session.conversationId, turnId, { timing: { sttStartedAt: new Date().toISOString() } });
+    const sttStartedAt = new Date().toISOString();
     const startSTT = Date.now();
     const transcript = await transcribeAudio(audioBuffer, session.languageCode, signal);
+    const sttCompletedAt = new Date().toISOString();
     const sttTime = Date.now() - startSTT;
     console.log(`[${session.id}] STT complete (${sttTime}ms)`);
     console.log(`[${session.id}] Transcript: "${transcript}"`);
@@ -214,10 +207,43 @@ export async function handleAudioReceived(
       return;
     }
 
+    // Auto session boundary check should happen only after transcript is valid,
+    // so reconnect noise or accidental taps don't create empty conversations.
+    const startedNewConversation = await applyInactivityCheck(session);
+    if (!startedNewConversation) {
+      await initConversation(
+        session.clientId,
+        session.conversationId,
+        session.languageCode,
+        getSessionDeviceInfo(session)
+      );
+    }
+
+    // Start tracking this turn only after transcript validity is confirmed.
+    session.turnCounter++;
+    session.currentTurnId = session.turnCounter;
+    const turnId = session.currentTurnId;
+
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[${session.id}] Starting audio processing pipeline (turn #${turnId}, conv=${session.conversationId})`);
+    console.log(`${'='.repeat(60)}\n`);
+
+    // Save turn and raw audio to disk (fire and forget)
+    startTurn(session.clientId, session.conversationId, turnId, {
+      autoScreenshot: session.autoScreenshot,
+      audioReceivedAt,
+    }).catch((err) => console.error(`[DataStore] Failed to start turn:`, err));
+
+    saveAudioInput(session.clientId, session.conversationId, turnId, audioBuffer)
+      .then((file) =>
+        updateTurn(session.clientId, session.conversationId, turnId, { input: { audioFile: file } })
+      )
+      .catch((err) => console.error(`[DataStore] Failed to save audio input:`, err));
+
     // Save transcript + STT timing to disk
     saveTiming(session.clientId, session.conversationId, turnId, {
       input: { transcript },
-      timing: { sttCompletedAt: new Date().toISOString() },
+      timing: { sttStartedAt, sttCompletedAt },
     });
 
     // Send transcript back to client

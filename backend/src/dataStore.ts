@@ -159,6 +159,7 @@ export function initConversation(
 
 export interface StartTurnOpts {
   autoScreenshot?: boolean;
+  audioReceivedAt?: string;
 }
 
 export function startTurn(
@@ -177,7 +178,7 @@ export function startTurn(
       input: {},
       output: {},
       timing: {
-        audioReceivedAt: new Date().toISOString(),
+        audioReceivedAt: opts?.audioReceivedAt ?? new Date().toISOString(),
       },
     };
     conv.turns.push(turn);
