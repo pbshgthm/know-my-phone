@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
-import { handleConnection } from "./wsHandler.js";
+import { handleConnection, getAllClients } from "./wsHandler.js";
 
 const PORT = parseInt(process.env.PORT || "8765", 10);
 
@@ -69,3 +69,30 @@ server.listen(PORT, () => {
   console.log('='.repeat(60));
   console.log(`⏳ Waiting for connections...\n`);
 });
+
+// Graceful shutdown
+function gracefulShutdown(signal: string) {
+  console.log(`\n[Server] Received ${signal}, shutting down gracefully...`);
+
+  // Close all WebSocket connections with "going away" code
+  for (const [ws] of getAllClients()) {
+    ws.close(1001, "Server shutting down");
+  }
+
+  wss.close(() => {
+    console.log("[Server] WebSocket server closed");
+    server.close(() => {
+      console.log("[Server] HTTP server closed");
+      process.exit(0);
+    });
+  });
+
+  // Force exit after 5 seconds
+  setTimeout(() => {
+    console.error("[Server] Forced shutdown after timeout");
+    process.exit(1);
+  }, 5000);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));

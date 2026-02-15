@@ -17,6 +17,7 @@ import android.view.View
 import android.view.WindowManager
 import com.knowyourphone.app.overlay.ConfirmPillView
 import com.knowyourphone.app.overlay.DotView
+import com.knowyourphone.app.overlay.ErrorToastView
 import com.knowyourphone.app.overlay.HighlightOverlayView
 import com.knowyourphone.app.state.AssistantState
 import com.knowyourphone.app.state.AssistantViewModel
@@ -48,6 +49,7 @@ class OverlayService : Service() {
     private var dotView: DotView? = null
     private var highlightView: HighlightOverlayView? = null
     private var confirmPillView: ConfirmPillView? = null
+    private var errorToastView: ErrorToastView? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -83,6 +85,7 @@ class OverlayService : Service() {
         removeDotOverlay()
         removeHighlightOverlay()
         removeConfirmPill()
+        removeErrorToast()
         scope.cancel()
         Log.d(TAG, "Overlay service destroyed")
     }
@@ -278,6 +281,76 @@ class OverlayService : Service() {
                 }
             }
         }
+
+        // Observe connection state for dot border indicator
+        scope.launch {
+            viewModel.connected.collect { connected ->
+                if (connected) {
+                    dotView?.setConnectionState(DotView.ConnectionState.CONNECTED)
+                } else if (viewModel.reconnecting.value) {
+                    dotView?.setConnectionState(DotView.ConnectionState.RECONNECTING)
+                } else {
+                    dotView?.setConnectionState(DotView.ConnectionState.DISCONNECTED)
+                }
+            }
+        }
+
+        scope.launch {
+            viewModel.reconnecting.collect { reconnecting ->
+                if (reconnecting) {
+                    dotView?.setConnectionState(DotView.ConnectionState.RECONNECTING)
+                } else if (viewModel.connected.value) {
+                    dotView?.setConnectionState(DotView.ConnectionState.CONNECTED)
+                } else {
+                    dotView?.setConnectionState(DotView.ConnectionState.DISCONNECTED)
+                }
+            }
+        }
+
+        // Observe error messages
+        scope.launch {
+            viewModel.errorMessage.collect { message ->
+                if (message != null) {
+                    showErrorToast(message)
+                    viewModel.clearError()
+                }
+            }
+        }
+    }
+
+    // --- Error toast ---
+
+    private fun showErrorToast(message: String) {
+        removeErrorToast()
+
+        val dismissDelay = if (message == "Connected") 1500L else 3000L
+
+        errorToastView = ErrorToastView(this, message)
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = dp(60)
+        }
+
+        windowManager.addView(errorToastView, params)
+
+        scope.launch {
+            delay(dismissDelay)
+            removeErrorToast()
+        }
+    }
+
+    private fun removeErrorToast() {
+        errorToastView?.let {
+            try { windowManager.removeView(it) } catch (_: Exception) {}
+        }
+        errorToastView = null
     }
 
     private fun dp(value: Int): Int {

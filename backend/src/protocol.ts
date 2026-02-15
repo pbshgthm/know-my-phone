@@ -29,10 +29,15 @@ export interface ScreenshotDeclinedMessage {
   type: "screenshot_declined";
 }
 
+export interface CancelMessage {
+  type: "cancel";
+}
+
 export type ClientMessage =
   | AudioDataMessage
   | ScreenshotResponseMessage
-  | ScreenshotDeclinedMessage;
+  | ScreenshotDeclinedMessage
+  | CancelMessage;
 
 // Server -> Client messages
 
@@ -50,6 +55,7 @@ export interface AnswerMessage {
   type: "answer";
   text: string;
   highlights: Highlight[];
+  hasAudio: boolean;
 }
 
 export interface ErrorMessage {
@@ -57,11 +63,16 @@ export interface ErrorMessage {
   message: string;
 }
 
+export interface CancelledMessage {
+  type: "cancelled";
+}
+
 export type ServerMessage =
   | TranscriptMessage
   | NeedScreenshotMessage
   | AnswerMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | CancelledMessage;
 
 // UI tree structure from Android accessibility service
 

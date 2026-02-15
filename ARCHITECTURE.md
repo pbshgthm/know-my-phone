@@ -90,9 +90,10 @@ know-your-phone/
             ├── KypAccessibilityService.kt     # UI tree + screenshot capture
             ├── OverlayService.kt              # Foreground service: dot + highlights
             ├── overlay/
-            │   ├── DotView.kt                 # Floating dot with state animations
+            │   ├── DotView.kt                 # Floating dot with state + connection animations
             │   ├── HighlightOverlayView.kt    # Draws circles/labels on targets
-            │   └── ConfirmPillView.kt         # "Confirm screenshot?" pill
+            │   ├── ConfirmPillView.kt         # "Confirm screenshot?" pill
+            │   └── ErrorToastView.kt          # Auto-dismiss error overlay
             ├── audio/
             │   ├── AudioRecorder.kt           # 16kHz mono PCM recording
             │   └── AudioPlayer.kt             # MP3 playback for TTS
@@ -118,6 +119,7 @@ know-your-phone/
 | `audio_data` | text then binary | `{"type":"audio_data","format":"wav","sampleRate":16000}` then WAV bytes |
 | `screenshot_response` | text | `{"type":"screenshot_response","screenshot":"<base64>","uiTree":{...}}` |
 | `screenshot_declined` | text | `{"type":"screenshot_declined"}` |
+| `cancel` | text | `{"type":"cancel"}` — abort current request |
 
 ### Server → Client
 
@@ -125,8 +127,9 @@ know-your-phone/
 |---|---|---|
 | `transcript` | text | `{"type":"transcript","text":"..."}` |
 | `need_screenshot` | text | `{"type":"need_screenshot","reason":"..."}` |
-| `answer` | text then binary | `{"type":"answer","text":"...","highlights":[...]}` then MP3 bytes |
+| `answer` | text, optionally then binary | `{"type":"answer","text":"...","highlights":[...],"hasAudio":true}` then MP3 bytes. If `hasAudio` is false, no binary frame follows. |
 | `error` | text | `{"type":"error","message":"..."}` |
+| `cancelled` | text | `{"type":"cancelled"}` — acknowledges cancellation |
 
 ### Highlight Format
 ```json
@@ -141,10 +144,27 @@ know-your-phone/
 
 ### Android App States
 ```
-IDLE → LISTENING → THINKING → SPEAKING → IDLE
+IDLE → LISTENING → THINKING → SPEAKING → HIGHLIGHTING → IDLE
                        ↓
               NEED_SCREENSHOT → THINKING → SPEAKING → HIGHLIGHTING → IDLE
+
+Interruption (tap dot to cancel and start new recording):
+  THINKING → cancel → LISTENING
+  SPEAKING → stop audio + cancel → LISTENING
+  NEED_SCREENSHOT → cancel → LISTENING
 ```
+
+### Dot Colors
+| State | Fill Color | Border |
+|---|---|---|
+| IDLE | Gray | White |
+| LISTENING | Green (pulsing) | White |
+| THINKING | Amber (rotating) | White |
+| SPEAKING | Blue (pulsing) | White |
+| NEED_SCREENSHOT | Orange | White |
+| HIGHLIGHTING | Purple | White |
+| Disconnected | (any) | Red |
+| Reconnecting | (any) | Yellow (pulsing) |
 
 ### Backend Flow
 ```
@@ -175,6 +195,38 @@ IDLE → LISTENING → THINKING → SPEAKING → IDLE
 - **LLM**: OpenRouter API for both text triage and multimodal visual analysis
 - **TTS**: ElevenLabs API, returns MP3 audio
 - **Sessions**: Per-WebSocket-connection conversation history
+
+## Reliability
+
+### WebSocket Reconnection
+- Android client auto-reconnects on failure/close with exponential backoff (1s, 2s, 4s, ... cap 30s)
+- Backoff resets on successful connection
+- Manual disconnect (`disconnect()`) stops reconnection
+- Dot border indicates connection state: white (connected), red (disconnected), yellow pulsing (reconnecting)
+
+### Cancellation
+- Client sends `{"type":"cancel"}` to abort in-flight requests
+- Backend uses per-session `AbortController` — signals propagate to all API calls (Whisper, OpenRouter, ElevenLabs)
+- New audio automatically cancels any previous in-flight request for the same session
+- Server responds with `{"type":"cancelled"}` to acknowledge
+
+### API Timeouts
+- Whisper STT: 30s
+- OpenRouter triage: 15s
+- OpenRouter analysis: 30s
+- ElevenLabs TTS: 15s
+- Pending screenshot requests: 60s TTL
+
+### Error Handling
+- `ErrorToastView` overlay shows user-visible error messages near the dot
+- Auto-dismisses after 3s (1.5s for "Connected" messages)
+- Error sources: connection lost, reconnecting, mic unavailable, send failed, server errors, TTS failure
+- TTS failure sends `hasAudio: false` — Android skips audio wait, goes directly to highlights/idle
+- Backend validates OpenRouter response fields before accessing
+
+### Graceful Shutdown
+- SIGTERM/SIGINT closes all WebSocket connections with code 1001 ("going away")
+- Force exits after 5s timeout if connections don't close cleanly
 
 ## Implementation Notes
 - AccessibilityService requires manual enablement in Settings > Accessibility

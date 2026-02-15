@@ -30,12 +30,49 @@ function sendError(ws: WebSocket, message: string): void {
 interface PendingScreenshotRequest {
   userText: string;
   reason: string;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 const pendingScreenshots = new Map<string, PendingScreenshotRequest>();
 
+// Per-session AbortController for cancelling in-flight API requests
+const sessionAbortControllers = new Map<string, AbortController>();
+
 export function hasPendingScreenshot(sessionId: string): boolean {
   return pendingScreenshots.has(sessionId);
+}
+
+/**
+ * Get or create an AbortController for a session.
+ * Aborts the previous controller if one exists.
+ */
+export function resetSessionAbort(sessionId: string): AbortController {
+  const existing = sessionAbortControllers.get(sessionId);
+  if (existing) {
+    existing.abort();
+  }
+  const controller = new AbortController();
+  sessionAbortControllers.set(sessionId, controller);
+  return controller;
+}
+
+/**
+ * Cancel any in-flight work for a session.
+ */
+export function cancelSession(ws: WebSocket, sessionId: string): void {
+  const controller = sessionAbortControllers.get(sessionId);
+  if (controller) {
+    controller.abort();
+    sessionAbortControllers.delete(sessionId);
+  }
+  // Clean up pending screenshot
+  const pending = pendingScreenshots.get(sessionId);
+  if (pending) {
+    clearTimeout(pending.timer);
+    pendingScreenshots.delete(sessionId);
+  }
+  sendJSON(ws, { type: "cancelled" });
+  console.log(`[${sessionId}] 🚫 Session cancelled`);
 }
 
 export async function handleAudioReceived(
@@ -43,6 +80,10 @@ export async function handleAudioReceived(
   session: Session,
   audioBuffer: Buffer
 ): Promise<void> {
+  // Create a fresh AbortController for this request (aborts any previous)
+  const controller = resetSessionAbort(session.id);
+  const signal = controller.signal;
+
   console.log(`\n${'='.repeat(60)}`);
   console.log(`[${session.id}] 🎬 Starting audio processing pipeline`);
   console.log(`${'='.repeat(60)}\n`);
@@ -51,7 +92,7 @@ export async function handleAudioReceived(
     // Step 1: STT
     console.log(`[${session.id}] 📝 Step 1/4: Transcribing audio (${audioBuffer.length} bytes)...`);
     const startSTT = Date.now();
-    const transcript = await transcribeAudio(audioBuffer);
+    const transcript = await transcribeAudio(audioBuffer, signal);
     const sttTime = Date.now() - startSTT;
     console.log(`[${session.id}] ✅ STT complete (${sttTime}ms)`);
     console.log(`[${session.id}] 💬 Transcript: "${transcript}"`);
@@ -73,16 +114,25 @@ export async function handleAudioReceived(
     // Step 2: Triage - does this need a screenshot?
     console.log(`[${session.id}] 🤔 Step 2/4: Running triage query...`);
     const startTriage = Date.now();
-    const triage = await triageQuery(transcript, getHistoryForLLM(session));
+    const triage = await triageQuery(transcript, getHistoryForLLM(session), signal);
     const triageTime = Date.now() - startTriage;
     console.log(`[${session.id}] ✅ Triage complete (${triageTime}ms)`);
     console.log(`[${session.id}] 🔍 Triage result: needsScreenshot=${triage.needsScreenshot}, reason="${triage.reason}"`);
 
     if (triage.needsScreenshot) {
-      // Store pending request and ask client for screenshot
+      // Store pending request with TTL and ask client for screenshot
+      const timer = setTimeout(() => {
+        if (pendingScreenshots.has(session.id)) {
+          pendingScreenshots.delete(session.id);
+          console.warn(`[${session.id}] ⏰ Screenshot request timed out after 60s`);
+          sendError(ws, "Screenshot request timed out.");
+        }
+      }, 60_000);
+
       pendingScreenshots.set(session.id, {
         userText: transcript,
         reason: triage.reason,
+        timer,
       });
       console.log(`[${session.id}] 📸 Requesting screenshot from client`);
       sendJSON(ws, {
@@ -103,15 +153,20 @@ export async function handleAudioReceived(
     const result = await textAnalysis(
       transcript,
       emptyUiTree,
-      getHistoryForLLM(session)
+      getHistoryForLLM(session),
+      signal
     );
     const analysisTime = Date.now() - startAnalysis;
     console.log(`[${session.id}] ✅ Analysis complete (${analysisTime}ms)`);
     console.log(`[${session.id}] 📝 Answer: "${result.answer}"`);
     console.log(`[${session.id}] 🎯 Highlights: ${result.highlights.length} items`);
 
-    await sendAnswer(ws, session, result);
+    await sendAnswer(ws, session, result, signal);
   } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      console.log(`[${session.id}] 🚫 Audio pipeline aborted`);
+      return;
+    }
     console.error(`[${session.id}] ❌ Error in audio pipeline:`);
     console.error(err);
     sendError(ws, "Something went wrong processing your request. Please try again.");
@@ -128,7 +183,15 @@ export async function handleScreenshotResponse(
     sendError(ws, "No pending screenshot request.");
     return;
   }
+  clearTimeout(pending.timer);
   pendingScreenshots.delete(session.id);
+
+  // Use existing session abort controller or create new one
+  let controller = sessionAbortControllers.get(session.id);
+  if (!controller || controller.signal.aborted) {
+    controller = resetSessionAbort(session.id);
+  }
+  const signal = controller.signal;
 
   try {
     console.log(`[${session.id}] Running visual analysis with screenshot...`);
@@ -136,11 +199,16 @@ export async function handleScreenshotResponse(
       pending.userText,
       message.screenshot,
       message.uiTree,
-      getHistoryForLLM(session)
+      getHistoryForLLM(session),
+      signal
     );
 
-    await sendAnswer(ws, session, result);
+    await sendAnswer(ws, session, result, signal);
   } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      console.log(`[${session.id}] 🚫 Visual analysis aborted`);
+      return;
+    }
     console.error(`[${session.id}] Error in visual analysis:`, err);
     sendError(ws, "Something went wrong analyzing the screenshot. Please try again.");
   }
@@ -155,7 +223,14 @@ export async function handleScreenshotDeclined(
     sendError(ws, "No pending screenshot request.");
     return;
   }
+  clearTimeout(pending.timer);
   pendingScreenshots.delete(session.id);
+
+  let controller = sessionAbortControllers.get(session.id);
+  if (!controller || controller.signal.aborted) {
+    controller = resetSessionAbort(session.id);
+  }
+  const signal = controller.signal;
 
   try {
     console.log(`[${session.id}] Screenshot declined, falling back to text analysis...`);
@@ -166,11 +241,16 @@ export async function handleScreenshotDeclined(
     const result = await textAnalysis(
       pending.userText,
       emptyUiTree,
-      getHistoryForLLM(session)
+      getHistoryForLLM(session),
+      signal
     );
 
-    await sendAnswer(ws, session, result);
+    await sendAnswer(ws, session, result, signal);
   } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      console.log(`[${session.id}] 🚫 Fallback analysis aborted`);
+      return;
+    }
     console.error(`[${session.id}] Error in fallback analysis:`, err);
     sendError(ws, "Something went wrong. Please try again.");
   }
@@ -179,21 +259,32 @@ export async function handleScreenshotDeclined(
 async function sendAnswer(
   ws: WebSocket,
   session: Session,
-  result: AnalysisResult
+  result: AnalysisResult,
+  signal?: AbortSignal
 ): Promise<void> {
   // Add assistant response to history
   addToHistory(session, "assistant", result.answer);
   console.log(`[${session.id}] 📚 Added assistant response to history`);
+
+  // Check if aborted before TTS
+  if (signal?.aborted) {
+    console.log(`[${session.id}] 🚫 Aborted before TTS`);
+    return;
+  }
 
   // Step 4: TTS
   console.log(`[${session.id}] 🔊 Step 4/4: Generating TTS for "${result.answer.substring(0, 50)}..."`);
   let mp3Buffer: Buffer;
   const startTTS = Date.now();
   try {
-    mp3Buffer = await textToSpeech(result.answer);
+    mp3Buffer = await textToSpeech(result.answer, signal);
     const ttsTime = Date.now() - startTTS;
     console.log(`[${session.id}] ✅ TTS generated (${mp3Buffer.length} bytes, ${ttsTime}ms)`);
   } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      console.log(`[${session.id}] 🚫 TTS aborted`);
+      return;
+    }
     console.error(`[${session.id}] ❌ TTS failed, sending text-only answer:`);
     console.error(err);
     // Send answer without audio if TTS fails
@@ -201,6 +292,7 @@ async function sendAnswer(
       type: "answer",
       text: result.answer,
       highlights: result.highlights,
+      hasAudio: false,
     };
     sendJSON(ws, answerMsg);
     console.log(`[${session.id}] 📤 Sent text-only answer (no audio)`);
@@ -212,6 +304,7 @@ async function sendAnswer(
     type: "answer",
     text: result.answer,
     highlights: result.highlights,
+    hasAudio: true,
   };
   console.log(`[${session.id}] 📤 Sending answer message + MP3 binary`);
   sendJSON(ws, answerMsg);
@@ -220,5 +313,14 @@ async function sendAnswer(
 }
 
 export function cleanupSession(sessionId: string): void {
+  const pending = pendingScreenshots.get(sessionId);
+  if (pending) {
+    clearTimeout(pending.timer);
+  }
   pendingScreenshots.delete(sessionId);
+  const controller = sessionAbortControllers.get(sessionId);
+  if (controller) {
+    controller.abort();
+  }
+  sessionAbortControllers.delete(sessionId);
 }

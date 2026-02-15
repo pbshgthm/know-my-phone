@@ -23,13 +23,18 @@ data class ScreenshotDeclinedMessage(
     val type: String = "screenshot_declined"
 )
 
+data class CancelMessage(
+    val type: String = "cancel"
+)
+
 // --- Server -> Client messages ---
 
 sealed class ServerMessage {
     data class Transcript(val text: String) : ServerMessage()
     data class NeedScreenshot(val reason: String) : ServerMessage()
-    data class Answer(val text: String, val highlights: List<HighlightTarget>) : ServerMessage()
+    data class Answer(val text: String, val highlights: List<HighlightTarget>, val hasAudio: Boolean) : ServerMessage()
     data class Error(val message: String) : ServerMessage()
+    object Cancelled : ServerMessage()
 }
 
 object MessageParser {
@@ -53,12 +58,14 @@ object MessageParser {
                     }
                     ServerMessage.Answer(
                         text = obj.get("text")?.asString ?: "",
-                        highlights = highlights
+                        highlights = highlights,
+                        hasAudio = obj.get("hasAudio")?.asBoolean ?: false
                     )
                 }
                 "error" -> ServerMessage.Error(
                     message = obj.get("message")?.asString ?: "Unknown error"
                 )
+                "cancelled" -> ServerMessage.Cancelled
                 else -> null
             }
         } catch (e: Exception) {

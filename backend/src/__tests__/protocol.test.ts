@@ -69,6 +69,7 @@ describe('Protocol Message Types', () => {
       type: 'answer',
       text: 'Tap the button',
       highlights: [highlight],
+      hasAudio: true,
     };
     expect(answer.highlights.length).toBe(1);
 

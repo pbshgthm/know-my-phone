@@ -30,7 +30,9 @@ interface ChatMessage {
 
 async function chatCompletion(
   messages: ChatMessage[],
-  model: string
+  model: string,
+  timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -39,6 +41,10 @@ async function chatCompletion(
   }
 
   console.log(`[OpenRouter] 🤖 Calling ${model} with ${messages.length} messages...`);
+
+  const fetchSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+    : AbortSignal.timeout(timeoutMs);
 
   const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: "POST",
@@ -54,6 +60,7 @@ async function chatCompletion(
       temperature: 0.3,
       max_tokens: 1024,
     }),
+    signal: fetchSignal,
   });
 
   if (!response.ok) {
@@ -63,10 +70,14 @@ async function chatCompletion(
   }
 
   const data = (await response.json()) as {
-    choices: Array<{ message: { content: string } }>;
+    choices?: Array<{ message?: { content?: string } }>;
   };
 
-  const content = data.choices[0].message.content;
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    console.error(`[OpenRouter] ❌ Missing content in response:`, JSON.stringify(data));
+    throw new Error("OpenRouter returned empty or malformed response");
+  }
   console.log(`[OpenRouter] ✅ Response received (${content.length} chars)`);
 
   return content;
@@ -83,7 +94,8 @@ function parseJSON<T>(raw: string): T {
 
 export async function triageQuery(
   userText: string,
-  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>
+  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
+  signal?: AbortSignal
 ): Promise<{ needsScreenshot: boolean; reason: string }> {
   const messages: ChatMessage[] = [
     { role: "system", content: TRIAGE_SYSTEM_PROMPT },
@@ -94,7 +106,7 @@ export async function triageQuery(
     { role: "user", content: userText },
   ];
 
-  const raw = await chatCompletion(messages, TEXT_MODEL);
+  const raw = await chatCompletion(messages, TEXT_MODEL, 15_000, signal);
   return parseJSON<{ needsScreenshot: boolean; reason: string }>(raw);
 }
 
@@ -102,7 +114,8 @@ export async function visualAnalysis(
   userText: string,
   screenshotBase64: string,
   uiTree: UiTree,
-  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>
+  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
+  signal?: AbortSignal
 ): Promise<AnalysisResult> {
   const messages: ChatMessage[] = [
     { role: "system", content: VISUAL_ANALYSIS_SYSTEM_PROMPT },
@@ -127,14 +140,15 @@ export async function visualAnalysis(
     },
   ];
 
-  const raw = await chatCompletion(messages, VISION_MODEL);
+  const raw = await chatCompletion(messages, VISION_MODEL, 30_000, signal);
   return parseJSON<AnalysisResult>(raw);
 }
 
 export async function textAnalysis(
   userText: string,
   uiTree: UiTree,
-  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>
+  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
+  signal?: AbortSignal
 ): Promise<AnalysisResult> {
   const messages: ChatMessage[] = [
     { role: "system", content: TEXT_ANALYSIS_SYSTEM_PROMPT },
@@ -148,6 +162,6 @@ export async function textAnalysis(
     },
   ];
 
-  const raw = await chatCompletion(messages, TEXT_MODEL);
+  const raw = await chatCompletion(messages, TEXT_MODEL, 30_000, signal);
   return parseJSON<AnalysisResult>(raw);
 }

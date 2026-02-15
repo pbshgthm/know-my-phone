@@ -45,6 +45,11 @@ class AudioPlayer(private val context: Context) {
             Log.d(TAG, "Playing MP3: ${mp3Data.size} bytes")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to play audio: ${e.message}")
+            // Release the MediaPlayer if prepare() or start() failed
+            try {
+                mediaPlayer?.release()
+            } catch (_: Exception) {}
+            mediaPlayer = null
             onCompletionCallback?.invoke()
         }
     }

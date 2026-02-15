@@ -27,8 +27,8 @@ class AudioRecorder {
             .coerceAtLeast(4096)
 
     @SuppressLint("MissingPermission")
-    fun startRecording(scope: CoroutineScope) {
-        if (isRecording) return
+    fun startRecording(scope: CoroutineScope): Boolean {
+        if (isRecording) return true
 
         pcmBuffer.reset()
         val minBuf = bufferSize
@@ -45,7 +45,7 @@ class AudioRecorder {
             Log.e(TAG, "AudioRecord failed to initialize")
             audioRecord?.release()
             audioRecord = null
-            return
+            return false
         }
 
         isRecording = true
@@ -64,6 +64,7 @@ class AudioRecorder {
         }
 
         Log.d(TAG, "Recording started")
+        return true
     }
 
     fun stopRecording(): ByteArray {

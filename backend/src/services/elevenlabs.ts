@@ -1,6 +1,6 @@
 const ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1";
 
-export async function textToSpeech(text: string): Promise<Buffer> {
+export async function textToSpeech(text: string, signal?: AbortSignal): Promise<Buffer> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
     console.error(`[ElevenLabs] ❌ ELEVENLABS_API_KEY not set in environment`);
@@ -10,6 +10,10 @@ export async function textToSpeech(text: string): Promise<Buffer> {
   const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // default: Rachel
 
   console.log(`[ElevenLabs] 🔊 Generating TTS for text (${text.length} chars, voice: ${voiceId})...`);
+
+  const fetchSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+    : AbortSignal.timeout(15_000);
 
   const response = await fetch(
     `${ELEVENLABS_BASE_URL}/text-to-speech/${voiceId}`,
@@ -28,6 +32,7 @@ export async function textToSpeech(text: string): Promise<Buffer> {
           similarity_boost: 0.75,
         },
       }),
+      signal: fetchSignal,
     }
   );
 

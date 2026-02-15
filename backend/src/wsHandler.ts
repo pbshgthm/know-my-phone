@@ -1,11 +1,12 @@
 import type WebSocket from "ws";
 import type { RawData } from "ws";
 import { createSession, deleteSession, type Session } from "./session.js";
-import type { ClientMessage, ScreenshotResponseMessage } from "./protocol.js";
+import type { ScreenshotResponseMessage } from "./protocol.js";
 import {
   handleAudioReceived,
   handleScreenshotResponse,
   handleScreenshotDeclined,
+  cancelSession,
   cleanupSession,
 } from "./stateMachine.js";
 
@@ -15,6 +16,10 @@ interface ClientState {
 }
 
 const clients = new Map<WebSocket, ClientState>();
+
+export function getAllClients(): Map<WebSocket, ClientState> {
+  return clients;
+}
 
 export function handleConnection(ws: WebSocket): void {
   const session = createSession();
@@ -69,44 +74,56 @@ function handleMessage(
     console.log(`[WS] 🎵 Session ${state.session.id}: received audio binary (${audioBuffer.length} bytes)`);
 
     // Fire and forget - the state machine handles the async flow
-    handleAudioReceived(ws, state.session, audioBuffer);
+    // .catch() prevents unhandled promise rejection
+    handleAudioReceived(ws, state.session, audioBuffer).catch((err) => {
+      console.error(`[WS] ❌ Unhandled error in audio pipeline for session ${state.session.id}:`, err);
+    });
     return;
   }
 
   // Text frame: parse JSON message
-  let message: ClientMessage;
+  let parsed: { type: string; [key: string]: unknown };
   try {
-    message = JSON.parse(data.toString()) as ClientMessage;
-    console.log(`[WS] 📨 Session ${state.session.id}: received message type="${message.type}"`);
+    parsed = JSON.parse(data.toString());
+    console.log(`[WS] 📨 Session ${state.session.id}: received message type="${parsed.type}"`);
   } catch (err) {
     console.error(`[WS] ❌ Session ${state.session.id}: Invalid JSON:`, err);
     ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
     return;
   }
 
-  switch (message.type) {
+  switch (parsed.type) {
     case "audio_data":
       // Next binary frame will contain the audio
       state.pendingAudioData = true;
-      console.log(`[WS] 🎤 Session ${state.session.id}: expecting audio data (${message.format}, ${message.sampleRate}Hz)`);
+      console.log(`[WS] 🎤 Session ${state.session.id}: expecting audio data (${parsed.format}, ${parsed.sampleRate}Hz)`);
+      break;
+
+    case "cancel":
+      console.log(`[WS] 🚫 Session ${state.session.id}: cancel requested`);
+      cancelSession(ws, state.session.id);
       break;
 
     case "screenshot_response":
-      console.log(`[WS] 📸 Session ${state.session.id}: received screenshot (${(message as ScreenshotResponseMessage).screenshot.length} chars base64)`);
-      handleScreenshotResponse(ws, state.session, message as ScreenshotResponseMessage);
+      console.log(`[WS] 📸 Session ${state.session.id}: received screenshot`);
+      handleScreenshotResponse(ws, state.session, parsed as unknown as ScreenshotResponseMessage).catch((err) => {
+        console.error(`[WS] ❌ Unhandled error in screenshot response for session ${state.session.id}:`, err);
+      });
       break;
 
     case "screenshot_declined":
       console.log(`[WS] 🚫 Session ${state.session.id}: screenshot declined`);
-      handleScreenshotDeclined(ws, state.session);
+      handleScreenshotDeclined(ws, state.session).catch((err) => {
+        console.error(`[WS] ❌ Unhandled error in screenshot declined for session ${state.session.id}:`, err);
+      });
       break;
 
     default:
-      console.warn(`[WS] ⚠️  Session ${state.session.id}: Unknown message type: ${(message as { type: string }).type}`);
+      console.warn(`[WS] ⚠️  Session ${state.session.id}: Unknown message type: ${parsed.type}`);
       ws.send(
         JSON.stringify({
           type: "error",
-          message: `Unknown message type: ${(message as { type: string }).type}`,
+          message: `Unknown message type: ${parsed.type}`,
         })
       );
   }

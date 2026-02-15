@@ -39,28 +39,49 @@ class AssistantViewModel(
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected
 
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage
+
+    private val _reconnecting = MutableStateFlow(false)
+    val reconnecting: StateFlow<Boolean> = _reconnecting
+
     private val audioRecorder = AudioRecorder()
     private val audioPlayer = AudioPlayer(context)
 
     // The binary frame we expect after an "answer" text frame
+    // Both fields set synchronously on OkHttp reader thread to avoid race with binary frame
+    @Volatile
     private var expectingMp3Binary = false
+    @Volatile
     private var pendingHighlights: List<HighlightTarget> = emptyList()
 
     private val wsClient = WsClient(
         onMessage = { text -> handleServerMessage(text) },
         onBinaryMessage = { data -> handleBinaryMessage(data) },
         onConnected = {
+            val wasReconnecting = _reconnecting.value
             _connected.value = true
+            _reconnecting.value = false
+            if (wasReconnecting) {
+                _errorMessage.value = "Connected"
+            }
             Log.d(TAG, "Connected to server")
         },
         onDisconnected = {
             scope.launch(Dispatchers.Main) {
                 _connected.value = false
+                _errorMessage.value = "Connection lost"
                 // Reset state to IDLE if we get disconnected while waiting
                 if (_state.value == AssistantState.THINKING || _state.value == AssistantState.LISTENING) {
                     _state.value = AssistantState.IDLE
                 }
                 Log.d(TAG, "Disconnected from server, state reset to IDLE")
+            }
+        },
+        onReconnecting = { reconnecting ->
+            _reconnecting.value = reconnecting
+            if (reconnecting) {
+                _errorMessage.value = "Reconnecting..."
             }
         }
     )
@@ -78,42 +99,61 @@ class AssistantViewModel(
 
     /**
      * Called when user taps the dot.
-     * If idle -> start listening.
-     * If listening -> stop listening and send audio.
-     * If speaking -> stop playback and go idle.
+     * IDLE -> start listening
+     * LISTENING -> stop listening and send audio
+     * THINKING -> cancel current request, start listening
+     * SPEAKING -> stop playback, cancel backend, start listening
+     * NEED_SCREENSHOT -> decline screenshot, start listening
+     * HIGHLIGHTING -> dismiss highlights, go idle
      */
     fun onDotTap() {
         when (_state.value) {
             AssistantState.IDLE -> startListening()
             AssistantState.LISTENING -> stopListeningAndSend()
+            AssistantState.THINKING -> {
+                // Cancel current request and start new recording
+                sendCancel()
+                expectingMp3Binary = false
+                startListening()
+            }
             AssistantState.SPEAKING -> {
+                // Stop audio, cancel any remaining backend work, start new recording
                 audioPlayer.stop()
-                _state.value = AssistantState.IDLE
+                sendCancel()
+                expectingMp3Binary = false
+                startListening()
+            }
+            AssistantState.NEED_SCREENSHOT -> {
+                // Decline screenshot and start new recording
+                sendCancel()
+                startListening()
             }
             AssistantState.HIGHLIGHTING -> {
                 _highlights.value = emptyList()
                 highlightDismissJob?.cancel()
                 _state.value = AssistantState.IDLE
             }
-            else -> {
-                // If stuck in thinking but disconnected, allow reset
-                if (!wsClient.isConnected()) {
-                    _state.value = AssistantState.IDLE
-                    connect() // Try to reconnect
-                }
-            }
         }
+    }
+
+    private fun sendCancel() {
+        wsClient.sendText(MessageParser.toJson(CancelMessage()))
     }
 
     private fun startListening() {
         if (!wsClient.isConnected()) {
             Log.w(TAG, "Not connected, attempting to reconnect...")
             connect()
-            // We could potentially wait here or just fail fast
+        }
+        _highlights.value = emptyList()
+        val started = audioRecorder.startRecording(scope)
+        if (!started) {
+            Log.e(TAG, "Failed to start recording (mic unavailable)")
+            _errorMessage.value = "Mic unavailable"
+            _state.value = AssistantState.IDLE
+            return
         }
         _state.value = AssistantState.LISTENING
-        _highlights.value = emptyList()
-        audioRecorder.startRecording(scope)
     }
 
     private fun stopListeningAndSend() {
@@ -128,6 +168,7 @@ class AssistantViewModel(
 
         if (!wsClient.isConnected()) {
             Log.e(TAG, "Cannot send audio: WebSocket not connected")
+            _errorMessage.value = "Send failed"
             _state.value = AssistantState.IDLE
             return
         }
@@ -144,7 +185,10 @@ class AssistantViewModel(
 
             if (!metaSent || !dataSent) {
                 Log.e(TAG, "Failed to send audio frames")
-                withContext(Dispatchers.Main) { _state.value = AssistantState.IDLE }
+                withContext(Dispatchers.Main) {
+                    _errorMessage.value = "Send failed"
+                    _state.value = AssistantState.IDLE
+                }
             } else {
                 Log.d(TAG, "Sent audio: ${wavData.size} bytes WAV")
             }
@@ -153,6 +197,32 @@ class AssistantViewModel(
 
     private fun handleServerMessage(json: String) {
         val message = MessageParser.parseServerMessage(json) ?: return
+
+        // For Answer messages, set flags synchronously on OkHttp's reader thread
+        // BEFORE the binary frame callback fires (OkHttp reader is single-threaded)
+        if (message is ServerMessage.Answer) {
+            Log.d(TAG, "Answer: ${message.text}, highlights: ${message.highlights.size}, hasAudio: ${message.hasAudio}")
+            pendingHighlights = message.highlights
+            if (message.hasAudio) {
+                expectingMp3Binary = true
+                Log.d(TAG, "Set expectingMp3Binary=true, waiting for audio binary")
+            } else {
+                expectingMp3Binary = false
+                Log.d(TAG, "No audio, transitioning directly")
+                _errorMessage.value = "Audio unavailable"
+                // No audio coming — go to highlights or idle
+                scope.launch(Dispatchers.Main) {
+                    if (pendingHighlights.isNotEmpty()) {
+                        _highlights.value = pendingHighlights
+                        _state.value = AssistantState.HIGHLIGHTING
+                        scheduleHighlightDismiss()
+                    } else {
+                        _state.value = AssistantState.IDLE
+                    }
+                }
+            }
+            return
+        }
 
         scope.launch(Dispatchers.Main) {
             when (message) {
@@ -167,17 +237,17 @@ class AssistantViewModel(
                     _state.value = AssistantState.NEED_SCREENSHOT
                 }
 
-                is ServerMessage.Answer -> {
-                    Log.d(TAG, "Answer: ${message.text}, highlights: ${message.highlights.size}")
-                    pendingHighlights = message.highlights
-                    expectingMp3Binary = true
-                    Log.d(TAG, "Set expectingMp3Binary=true, waiting for audio binary")
-                    // Wait for MP3 binary frame
-                }
+                is ServerMessage.Answer -> { /* handled above */ }
 
                 is ServerMessage.Error -> {
                     Log.e(TAG, "Server error: ${message.message}")
+                    _errorMessage.value = message.message
                     _state.value = AssistantState.IDLE
+                }
+
+                is ServerMessage.Cancelled -> {
+                    Log.d(TAG, "Server acknowledged cancellation")
+                    // State already updated by onDotTap, nothing to do
                 }
             }
         }
@@ -274,6 +344,10 @@ class AssistantViewModel(
         if (!sent) {
             _state.value = AssistantState.IDLE
         }
+    }
+
+    fun clearError() {
+        _errorMessage.value = null
     }
 
     fun destroy() {
