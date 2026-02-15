@@ -228,6 +228,13 @@ The backend is currently deployed on Replit at [https://know-my-phone.replit.app
 
 ### Android
 
+**Download pre-built APK**
+
+- **[Releases](https://github.com/pbshgthm/know-my-phone/releases)** – Tag a version (e.g. `v1.0`) and the APK will be built and attached to the release.
+- **Latest build** – Open [Actions](https://github.com/pbshgthm/know-my-phone/actions), pick the latest successful run, and download the APK from the workflow artifacts.
+
+**Build from source**
+
 1. Open the `android` folder in Android Studio.
 2. **Port forwarding (required for dev)**: The app connects to the backend over WebSocket. When using a device or emulator, you must run the `adb-reverse` script so the device can reach the backend on your machine:
    ```bash
