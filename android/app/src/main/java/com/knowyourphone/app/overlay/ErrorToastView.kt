@@ -8,10 +8,17 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.widget.FrameLayout
 import android.widget.TextView
+import com.knowyourphone.app.i18n.LanguageManager
 
 class ErrorToastView(context: Context, message: String) : FrameLayout(context) {
 
     init {
+        LanguageManager.init(context.applicationContext)
+        val langCode = context
+            .getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
+            .getString("language_code", "en") ?: "en"
+        val messageSizeSp = if (LanguageManager.isIndicLanguage(langCode)) 12f else 13f
+
         val paddingH = dp(20)
         val paddingV = dp(10)
 
@@ -25,7 +32,7 @@ class ErrorToastView(context: Context, message: String) : FrameLayout(context) {
         val textView = TextView(context).apply {
             text = message
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, messageSizeSp)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             gravity = Gravity.CENTER
             setPadding(paddingH, paddingV, paddingH, paddingV)

@@ -77,16 +77,16 @@ class OverlayService : Service() {
         val prefs = getSharedPreferences("kyp_prefs", MODE_PRIVATE)
         val serverUrl = prefs.getString("server_url", "ws://localhost:8765") ?: "ws://localhost:8765"
 
+        LanguageManager.init(applicationContext)
         viewModel = AssistantViewModel(applicationContext, serverUrl)
 
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
-        LanguageManager.init(applicationContext)
         val langCode = prefs.getString("language_code", "en") ?: "en"
 
         addDotOverlay()
-        dotView?.setLanguageStrings(LanguageManager.getPillStrings(langCode))
+        dotView?.setLanguageStrings(langCode, LanguageManager.getPillStrings(langCode))
         addHighlightOverlay()
 
         viewModel.connect()
@@ -112,7 +112,8 @@ class OverlayService : Service() {
 
     fun setLanguage(languageCode: String) {
         viewModel.setLanguage(languageCode)
-        dotView?.setLanguageStrings(LanguageManager.getPillStrings(languageCode))
+        dotView?.setLanguageStrings(languageCode, LanguageManager.getPillStrings(languageCode))
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
     }
 
     fun setAutoScreenshot(enabled: Boolean) {
@@ -120,18 +121,20 @@ class OverlayService : Service() {
     }
 
     private fun createNotificationChannel() {
+        val strings = currentAppStrings()
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Know Your Phone",
+            strings.title,
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Voice assistant overlay"
+            description = strings.notificationChannelDescription
         }
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(channel)
     }
 
     private fun buildNotification(): Notification {
+        val strings = currentAppStrings()
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
@@ -139,8 +142,8 @@ class OverlayService : Service() {
         )
 
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("Know Your Phone")
-            .setContentText("Voice assistant is active")
+            .setContentTitle(strings.title)
+            .setContentText(strings.notificationActive)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -151,6 +154,7 @@ class OverlayService : Service() {
 
     private fun addDotOverlay() {
         dotView = DotView(this)
+        dotView?.onSizeChanged = { updateDotLayoutForState() }
         val params = WindowManager.LayoutParams(
             dotView!!.getDesiredWidthPx(),
             dotView!!.getDesiredHeightPx(),
@@ -247,6 +251,7 @@ class OverlayService : Service() {
 
     private fun removeDotOverlay() {
         dotView?.let {
+            it.onSizeChanged = null
             try { windowManager.removeView(it) } catch (_: Exception) {}
         }
         dotView = null
@@ -352,7 +357,7 @@ class OverlayService : Service() {
     private fun showErrorToast(message: String) {
         removeErrorToast()
 
-        val dismissDelay = if (message == "Connected") 1500L else 3000L
+        val dismissDelay = if (message == currentAppStrings().connected) 1500L else 3000L
 
         errorToastView = ErrorToastView(this, message)
         val params = WindowManager.LayoutParams(
@@ -410,4 +415,11 @@ class OverlayService : Service() {
             TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics
         ).toInt()
     }
+
+    private fun currentLanguageCode(): String {
+        val prefs = getSharedPreferences("kyp_prefs", MODE_PRIVATE)
+        return prefs.getString("language_code", "en") ?: "en"
+    }
+
+    private fun currentAppStrings() = LanguageManager.getAppStrings(currentLanguageCode())
 }

@@ -10,6 +10,7 @@ import com.knowyourphone.app.R
 import com.knowyourphone.app.audio.AudioRecorder
 import com.knowyourphone.app.audio.PromptAudioPlayer
 import com.knowyourphone.app.audio.StreamingAudioPlayer
+import com.knowyourphone.app.i18n.LanguageManager
 import kotlinx.coroutines.channels.Channel
 import com.knowyourphone.app.model.HighlightTarget
 import com.knowyourphone.app.network.*
@@ -67,6 +68,7 @@ class AssistantViewModel(
     private val clientId: String = getOrCreateClientId()
 
     init {
+        LanguageManager.init(context.applicationContext)
         _autoScreenshot.value = context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
             .getBoolean("auto_screenshot", false)
     }
@@ -93,7 +95,7 @@ class AssistantViewModel(
             _connected.value = true
             _reconnecting.value = false
             if (wasReconnecting) {
-                _errorMessage.value = "Connected"
+                _errorMessage.value = appStrings().connected
             }
             sendHello()
             sendLanguage()
@@ -103,7 +105,7 @@ class AssistantViewModel(
         onDisconnected = {
             scope.launch(Dispatchers.Main) {
                 _connected.value = false
-                _errorMessage.value = "Connection lost"
+                _errorMessage.value = appStrings().connectionLost
                 // Reset state to IDLE if we get disconnected while waiting
                 if (_state.value == AssistantState.THINKING || _state.value == AssistantState.LISTENING) {
                     _state.value = AssistantState.IDLE
@@ -114,7 +116,7 @@ class AssistantViewModel(
         onReconnecting = { reconnecting ->
             _reconnecting.value = reconnecting
             if (reconnecting) {
-                _errorMessage.value = "Reconnecting..."
+                _errorMessage.value = appStrings().reconnecting
             }
         }
     )
@@ -261,7 +263,7 @@ class AssistantViewModel(
         }
         if (!started) {
             Log.e(TAG, "Failed to start recording (mic unavailable)")
-            _errorMessage.value = "Mic unavailable"
+            _errorMessage.value = appStrings().micUnavailable
             _inputLevel.value = 0f
             smoothedInputLevel = 0f
             _playbackLevel.value = 0f
@@ -288,7 +290,7 @@ class AssistantViewModel(
 
         if (!wsClient.isConnected()) {
             Log.e(TAG, "Cannot send audio: WebSocket not connected")
-            _errorMessage.value = "Send failed"
+            _errorMessage.value = appStrings().sendFailed
             _state.value = AssistantState.IDLE
             return
         }
@@ -306,7 +308,7 @@ class AssistantViewModel(
             if (!metaSent || !dataSent) {
                 Log.e(TAG, "Failed to send audio frames")
                 withContext(Dispatchers.Main) {
-                    _errorMessage.value = "Send failed"
+                    _errorMessage.value = appStrings().sendFailed
                     _inputLevel.value = 0f
                     smoothedInputLevel = 0f
                     _playbackLevel.value = 0f
@@ -599,6 +601,8 @@ class AssistantViewModel(
 
     fun setLanguage(code: String) {
         languageCode = code
+        context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
+            .edit().putString("language_code", code).apply()
         sendLanguage()
     }
 
@@ -627,6 +631,8 @@ class AssistantViewModel(
         val prefs = context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)
         return prefs.getString("language_code", "en") ?: "en"
     }
+
+    private fun appStrings() = LanguageManager.getAppStrings(languageCode)
 
     fun clearError() {
         _errorMessage.value = null

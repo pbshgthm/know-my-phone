@@ -45,9 +45,8 @@ class MainActivity : AppCompatActivity() {
         private const val COLOR_TEXT_SECONDARY = 0xFF6B7280.toInt()
         private const val COLOR_TEXT_TERTIARY = 0xFF9CA3AF.toInt()
         private const val COLOR_BORDER = 0xFFE5E7EB.toInt()
-        private const val COLOR_WARNING_BG = 0xFFFEF3C7.toInt()
-        private const val COLOR_WARNING_BORDER = 0xFFFCD34D.toInt()
-        private const val COLOR_WARNING_TEXT = 0xFF92400E.toInt()
+        private const val COLOR_PERMISSION_ROW_BG = 0xFFF8FAFF.toInt()
+        private const val COLOR_PERMISSION_ROW_BORDER = 0x264F46E5.toInt()
 
         private const val CIRCLE_SIZE_DP = 44
         private const val CIRCLE_SPACING_DP = 12
@@ -55,6 +54,13 @@ class MainActivity : AppCompatActivity() {
         private const val COLOR_CIRCLE_BORDER = 0xFF6B7280.toInt()
         private const val COLOR_CIRCLE_TEXT_MUTED = 0xFF9CA3AF.toInt()
     }
+
+    private data class PermissionRowViews(
+        val row: LinearLayout,
+        val labelView: TextView,
+        val subtitleView: TextView,
+        val grantButton: MaterialButton
+    )
 
     private lateinit var coordinatorLayout: CoordinatorLayout
     private lateinit var permissionsCard: MaterialCardView
@@ -69,9 +75,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var titleText: TextView
     private lateinit var subtitleText: TextView
     private lateinit var permissionsTitle: TextView
+    private lateinit var permissionsHelpText: TextView
     private lateinit var languageLabel: TextView
     private lateinit var autoShareTitle: TextView
     private lateinit var autoShareSubtitle: TextView
+    private lateinit var micLabelText: TextView
+    private lateinit var micSubtitleText: TextView
+    private lateinit var micGrantBtn: MaterialButton
+    private lateinit var overlayLabelText: TextView
+    private lateinit var overlaySubtitleText: TextView
+    private lateinit var overlayGrantBtn: MaterialButton
+    private lateinit var accessibilityLabelText: TextView
+    private lateinit var accessibilitySubtitleText: TextView
+    private lateinit var accessibilityGrantBtn: MaterialButton
 
     private var selectedLanguageCode = "en"
     private val circleViews = mutableListOf<TextView>()
@@ -110,7 +126,7 @@ class MainActivity : AppCompatActivity() {
         // --- Header ---
         titleText = TextView(this).apply {
             text = appStrings.title
-            textSize = 26f
+            textSize = scaledSp(26f)
             setTextColor(COLOR_TEXT_PRIMARY)
             typeface = Typeface.create("sans-serif", Typeface.BOLD)
         }
@@ -118,7 +134,7 @@ class MainActivity : AppCompatActivity() {
 
         subtitleText = TextView(this).apply {
             text = appStrings.subtitle
-            textSize = 14f
+            textSize = scaledSp(14f)
             setTextColor(COLOR_TEXT_SECONDARY)
             setPadding(0, dp(4), 0, dp(32))
         }
@@ -126,11 +142,11 @@ class MainActivity : AppCompatActivity() {
 
         // --- Permissions Card (shown only when needed) ---
         permissionsCard = MaterialCardView(this).apply {
-            radius = dp(16f)
+            radius = dp(18f)
             cardElevation = 0f
             strokeWidth = dp(1)
-            strokeColor = COLOR_WARNING_BORDER
-            setCardBackgroundColor(COLOR_WARNING_BG)
+            strokeColor = COLOR_BORDER
+            setCardBackgroundColor(COLOR_SURFACE)
         }
 
         val permContent = LinearLayout(this).apply {
@@ -140,29 +156,54 @@ class MainActivity : AppCompatActivity() {
 
         permissionsTitle = TextView(this).apply {
             text = appStrings.permissions
-            textSize = 13f
-            setTextColor(COLOR_WARNING_TEXT)
+            textSize = scaledSp(14f)
+            setTextColor(COLOR_TEXT_PRIMARY)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setPadding(0, 0, 0, dp(8))
+            setPadding(0, 0, 0, dp(4))
         }
         permContent.addView(permissionsTitle)
 
-        micRow = makePermissionRow(appStrings.micLabel, appStrings.micSubtitle, appStrings.grant) {
+        permissionsHelpText = TextView(this).apply {
+            text = appStrings.permissionsHelp
+            textSize = scaledSp(12f)
+            setTextColor(COLOR_TEXT_SECONDARY)
+            setLineSpacing(0f, 1.12f)
+            setPadding(0, 0, 0, dp(12))
+        }
+        permContent.addView(permissionsHelpText)
+
+        val micViews = makePermissionRow(appStrings.micLabel, appStrings.micSubtitle, appStrings.grant) {
             ActivityCompat.requestPermissions(
                 this, arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MIC
             )
         }
-        permContent.addView(micRow)
+        micRow = micViews.row
+        micLabelText = micViews.labelView
+        micSubtitleText = micViews.subtitleView
+        micGrantBtn = micViews.grantButton
+        permContent.addView(micRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+            bottomMargin = dp(10)
+        })
 
-        overlayRow = makePermissionRow(appStrings.overlayLabel, appStrings.overlaySubtitle, appStrings.grant) {
+        val overlayViews = makePermissionRow(appStrings.overlayLabel, appStrings.overlaySubtitle, appStrings.grant) {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         }
-        permContent.addView(overlayRow)
+        overlayRow = overlayViews.row
+        overlayLabelText = overlayViews.labelView
+        overlaySubtitleText = overlayViews.subtitleView
+        overlayGrantBtn = overlayViews.grantButton
+        permContent.addView(overlayRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+            bottomMargin = dp(10)
+        })
 
-        accessibilityRow = makePermissionRow(appStrings.accessibilityLabel, appStrings.accessibilitySubtitle, appStrings.grant) {
+        val accessibilityViews = makePermissionRow(appStrings.accessibilityLabel, appStrings.accessibilitySubtitle, appStrings.grant) {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
-        permContent.addView(accessibilityRow)
+        accessibilityRow = accessibilityViews.row
+        accessibilityLabelText = accessibilityViews.labelView
+        accessibilitySubtitleText = accessibilityViews.subtitleView
+        accessibilityGrantBtn = accessibilityViews.grantButton
+        permContent.addView(accessibilityRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         permissionsCard.addView(permContent)
         root.addView(permissionsCard, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
@@ -172,7 +213,7 @@ class MainActivity : AppCompatActivity() {
         // --- Language circle selector ---
         languageLabel = TextView(this).apply {
             text = appStrings.language
-            textSize = 13f
+            textSize = scaledSp(13f)
             setTextColor(COLOR_TEXT_SECONDARY)
             setPadding(dp(4), 0, 0, dp(6))
         }
@@ -219,13 +260,13 @@ class MainActivity : AppCompatActivity() {
         }
         autoShareTitle = TextView(this).apply {
             text = appStrings.autoShare
-            textSize = 15f
+            textSize = scaledSp(15f)
             setTextColor(COLOR_TEXT_PRIMARY)
         }
         autoShareTextColumn.addView(autoShareTitle)
         autoShareSubtitle = TextView(this).apply {
             text = appStrings.autoShareSub
-            textSize = 12f
+            textSize = scaledSp(12f)
             setTextColor(COLOR_TEXT_TERTIARY)
             setPadding(0, dp(2), 0, 0)
         }
@@ -264,7 +305,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(COLOR_PRIMARY)
             setTextColor(Color.WHITE)
             cornerRadius = dp(12)
-            textSize = 15f
+            textSize = scaledSp(15f)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             isAllCaps = false
             insetTop = 0
@@ -279,7 +320,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(COLOR_TEXT_SECONDARY)
             strokeColor = ColorStateList.valueOf(COLOR_BORDER)
             cornerRadius = dp(12)
-            textSize = 14f
+            textSize = scaledSp(14f)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             isAllCaps = false
             rippleColor = ColorStateList.valueOf(0x11111827)
@@ -298,13 +339,13 @@ class MainActivity : AppCompatActivity() {
         scrollView.addView(root, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         coordinatorLayout.addView(scrollView, CoordinatorLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         setContentView(coordinatorLayout)
+        applyLanguageTypography()
     }
 
     private fun makeCircleView(letter: String, selected: Boolean): TextView {
-        val size = dp(CIRCLE_SIZE_DP)
         return TextView(this).apply {
             text = letter
-            textSize = 18f
+            textSize = scaledSp(18f)
             gravity = Gravity.CENTER
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             background = makeCircleDrawable(selected)
@@ -347,55 +388,95 @@ class MainActivity : AppCompatActivity() {
         titleText.text = s.title
         subtitleText.text = s.subtitle
         permissionsTitle.text = s.permissions
+        permissionsHelpText.text = s.permissionsHelp
         languageLabel.text = s.language
         autoShareTitle.text = s.autoShare
         autoShareSubtitle.text = s.autoShareSub
+        micLabelText.text = s.micLabel
+        micSubtitleText.text = s.micSubtitle
+        micGrantBtn.text = s.grant
+        overlayLabelText.text = s.overlayLabel
+        overlaySubtitleText.text = s.overlaySubtitle
+        overlayGrantBtn.text = s.grant
+        accessibilityLabelText.text = s.accessibilityLabel
+        accessibilitySubtitleText.text = s.accessibilitySubtitle
+        accessibilityGrantBtn.text = s.grant
         stopBtn.text = s.stop
 
         // Update start/reset button
         startResetBtn.text = if (OverlayService.instance != null) s.resetSession else s.startAssistant
+        applyLanguageTypography()
     }
 
-    private fun makePermissionRow(label: String, subtitle: String, grantText: String, onClick: () -> Unit): LinearLayout {
+    private fun makePermissionRow(
+        label: String,
+        subtitle: String,
+        grantText: String,
+        onClick: () -> Unit
+    ): PermissionRowViews {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(6), 0, dp(6))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(14f)
+                setColor(COLOR_PERMISSION_ROW_BG)
+                setStroke(dp(1), COLOR_PERMISSION_ROW_BORDER)
+            }
         }
+
+        val indicator = View(this).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(COLOR_ACCENT)
+            }
+        }
+        row.addView(indicator, LinearLayout.LayoutParams(dp(8), dp(8)).apply {
+            rightMargin = dp(12)
+        })
 
         val textColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
         }
-        textColumn.addView(TextView(this).apply {
+        val labelView = TextView(this).apply {
             text = label
-            textSize = 14f
+            textSize = scaledSp(14f)
             setTextColor(COLOR_TEXT_PRIMARY)
-        })
-        textColumn.addView(TextView(this).apply {
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+        textColumn.addView(labelView)
+        val subtitleView = TextView(this).apply {
             text = subtitle
-            textSize = 11f
+            textSize = scaledSp(11f)
             setTextColor(COLOR_TEXT_TERTIARY)
-        })
+            setPadding(0, dp(2), 0, 0)
+        }
+        textColumn.addView(subtitleView)
 
-        val btn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+        val btn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonStyle).apply {
             text = grantText
-            textSize = 12f
+            textSize = scaledSp(12f)
             isAllCaps = false
-            cornerRadius = dp(8)
-            strokeColor = ColorStateList.valueOf(COLOR_WARNING_BORDER)
-            setTextColor(COLOR_WARNING_TEXT)
+            cornerRadius = dp(10)
+            setBackgroundColor(COLOR_ACCENT)
+            setTextColor(Color.WHITE)
             insetTop = 0
             insetBottom = 0
-            minHeight = dp(32)
-            minimumHeight = dp(32)
-            setPadding(dp(12), 0, dp(12), 0)
+            minHeight = dp(36)
+            minimumHeight = dp(36)
+            setPadding(dp(14), 0, dp(14), 0)
             setOnClickListener { onClick() }
         }
 
         row.addView(textColumn)
         row.addView(btn)
-        return row
+        return PermissionRowViews(
+            row = row,
+            labelView = labelView,
+            subtitleView = subtitleView,
+            grantButton = btn
+        )
     }
 
     private fun updatePermissionStatus() {
@@ -472,5 +553,36 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Float): Float {
         return value * resources.displayMetrics.density
+    }
+
+    private fun fontScale(): Float =
+        if (LanguageManager.isIndicLanguage(selectedLanguageCode)) 0.92f else 1f
+
+    private fun scaledSp(baseSp: Float): Float = baseSp * fontScale()
+
+    private fun applyLanguageTypography() {
+        titleText.textSize = scaledSp(26f)
+        subtitleText.textSize = scaledSp(14f)
+        permissionsTitle.textSize = scaledSp(14f)
+        permissionsHelpText.textSize = scaledSp(12f)
+        languageLabel.textSize = scaledSp(13f)
+        autoShareTitle.textSize = scaledSp(15f)
+        autoShareSubtitle.textSize = scaledSp(12f)
+
+        micLabelText.textSize = scaledSp(14f)
+        micSubtitleText.textSize = scaledSp(11f)
+        micGrantBtn.textSize = scaledSp(12f)
+        overlayLabelText.textSize = scaledSp(14f)
+        overlaySubtitleText.textSize = scaledSp(11f)
+        overlayGrantBtn.textSize = scaledSp(12f)
+        accessibilityLabelText.textSize = scaledSp(14f)
+        accessibilitySubtitleText.textSize = scaledSp(11f)
+        accessibilityGrantBtn.textSize = scaledSp(12f)
+
+        startResetBtn.textSize = scaledSp(15f)
+        stopBtn.textSize = scaledSp(14f)
+        for (circle in circleViews) {
+            circle.textSize = scaledSp(18f)
+        }
     }
 }

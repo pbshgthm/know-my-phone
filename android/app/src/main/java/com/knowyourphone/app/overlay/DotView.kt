@@ -2,7 +2,6 @@ package com.knowyourphone.app.overlay
 
 import android.animation.ValueAnimator
 import android.content.Context
-import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -14,6 +13,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.util.TypedValue
 import android.view.View
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import androidx.core.graphics.PathParser
 import com.knowyourphone.app.i18n.LanguageManager
@@ -26,8 +26,9 @@ class DotView(context: Context) : View(context) {
     companion object {
         const val DOT_SIZE_DP = 68
         private const val PILL_HEIGHT_DP = 48f
-        private const val PILL_WIDTH_DP = 188f
-        private const val SHADOW_PAD_DP = 8f
+        private const val PILL_MIN_WIDTH_DP = 188f
+        private const val PILL_MAX_WIDTH_FRACTION = 0.92f
+        private const val SHADOW_PAD_DP = 0f
         private const val ICON_SIZE_DP = 20f
         private const val ICON_STROKE_DP = 2f
         private const val INLINE_TEXT_ICON_SIZE_DP = 14f
@@ -35,25 +36,28 @@ class DotView(context: Context) : View(context) {
         private const val INLINE_TEXT_ICON_GAP_DP = 4f
 
         // Dark pill palette
-        private const val COLOR_PILL_BG_START = 0xFF08080F.toInt()
-        private const val COLOR_PILL_BG_END = 0xFF1E1E38.toInt()
-        private const val COLOR_OUTLINE = 0xFF8888A0.toInt()
-        private const val COLOR_TEXT = 0xFFD4D4DC.toInt()
-        private const val COLOR_TEXT_MUTED = 0xFF8888A0.toInt()
-        private const val COLOR_DISCONNECTED = 0xFFEF4444.toInt()
-        private const val COLOR_RECONNECTING = 0xFFFBBF24.toInt()
+        private const val COLOR_PILL_BG_START = 0xFF072838.toInt()
+        private const val COLOR_PILL_BG_MID = 0xFF102A66.toInt()
+        private const val COLOR_PILL_BG_END = 0xFF331555.toInt()
+        private const val COLOR_OUTLINE_START = 0xFF22D3EE.toInt() // cyan
+        private const val COLOR_OUTLINE_MID = 0xFF3B82F6.toInt() // blue
+        private const val COLOR_OUTLINE_END = 0xFF8B5CF6.toInt() // purple
+        private const val COLOR_TEXT = 0xFFF3F8FF.toInt()
+        private const val COLOR_TEXT_MUTED = 0xFFB8C8E8.toInt()
     }
 
     enum class ConnectionState { CONNECTED, DISCONNECTED, RECONNECTING }
     enum class PillAction { MIC_ICON, X_BUTTON, CONFIRM, NONE }
 
-    private var pillStrings: PillStrings = PillStrings("Tap", "to talk", "Thinking", "Share screen")
+    var onSizeChanged: (() -> Unit)? = null
 
-    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = Color.argb(100, 0, 0, 0)
-        maskFilter = BlurMaskFilter(dp(SHADOW_PAD_DP), BlurMaskFilter.Blur.NORMAL)
-    }
+    private var pillStrings: PillStrings = PillStrings(
+        tapPrefix = "Tap",
+        tapSuffix = "to ask",
+        thinking = "Thinking",
+        shareScreen = "Share screen",
+        idlePrompt = "Tap {mic} to ask"
+    )
 
     private val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -61,8 +65,7 @@ class DotView(context: Context) : View(context) {
 
     private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dp(1.5f)
-        color = COLOR_OUTLINE
+        strokeWidth = dp(2f)
     }
 
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -76,7 +79,7 @@ class DotView(context: Context) : View(context) {
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         color = COLOR_TEXT
-        textSize = dp(14f)
+        textSize = dp(13.5f)
     }
 
     private val eqBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -94,10 +97,6 @@ class DotView(context: Context) : View(context) {
         strokeWidth = dp(1.5f)
     }
 
-    private val statusDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-    }
-
     // State-specific circle colors (center, edge for gradient)
     private val circleColorIdleCenter = 0xFF38BDF8.toInt() // bright sky blue
     private val circleColorIdleEdge = 0xFF0284C7.toInt()
@@ -109,6 +108,8 @@ class DotView(context: Context) : View(context) {
     private val circleColorNeedScreenshotEdge = 0xFF16A34A.toInt()
     private val circleColorSpeakingCenter = 0xFF6366F1.toInt()
     private val circleColorSpeakingEdge = 0xFF4338CA.toInt()
+    private val circleColorOfflineCenter = 0xFF9CA3AF.toInt()
+    private val circleColorOfflineEdge = 0xFF6B7280.toInt()
     private val circleColorXStroke = 0xFF7A7A90.toInt()
 
     // Waveform colors per state
@@ -145,8 +146,9 @@ class DotView(context: Context) : View(context) {
     private var playbackLevel = 0f
     private val waveformHistory = FloatArray(180) { 0f }
 
-    // Cached fixed width for the pill.
+    // Animated width for the pill.
     private var animatedWidth = 0f
+    private var widthAnimator: ValueAnimator? = null
     private var lastPillRect: RectF? = null
 
     private val tempPath = Path()
@@ -191,10 +193,6 @@ class DotView(context: Context) : View(context) {
         path("M18 6 6 18"),
         path("m6 6 12 12")
     )
-
-    init {
-        setLayerType(LAYER_TYPE_SOFTWARE, null)
-    }
 
     fun setState(state: AssistantState) {
         val previousState = currentState
@@ -252,8 +250,10 @@ class DotView(context: Context) : View(context) {
         invalidate()
     }
 
-    fun setLanguageStrings(strings: PillStrings) {
+    fun setLanguageStrings(languageCode: String, strings: PillStrings) {
         pillStrings = strings
+        textPaint.textSize = dp(if (LanguageManager.isIndicLanguage(languageCode)) 12.8f else 13.5f)
+        animateToTargetWidth()
         invalidate()
     }
 
@@ -264,11 +264,18 @@ class DotView(context: Context) : View(context) {
 
     private fun computeTargetWidthPx(): Float {
         val shadowPad = dp(SHADOW_PAD_DP)
-        return dp(PILL_WIDTH_DP) + shadowPad * 2f
+        val pillHeight = dp(PILL_HEIGHT_DP)
+        val minTotalWidth = dp(PILL_MIN_WIDTH_DP) + shadowPad * 2f
+        val maxTotalWidth = resources.displayMetrics.widthPixels * PILL_MAX_WIDTH_FRACTION
+
+        val centerContentWidth = measureCenterContentWidth() + dp(18f)
+        val pillWidth = pillHeight * 2f + dp(8f) + centerContentWidth
+        val totalWidth = pillWidth + shadowPad * 2f
+        return totalWidth.coerceIn(minTotalWidth, maxTotalWidth)
     }
 
     fun getDesiredWidthPx(): Int {
-        return if (animatedWidth > 0f) animatedWidth.toInt() else computeTargetWidthPx().toInt()
+        return if (animatedWidth > 0f) kotlin.math.ceil(animatedWidth).toInt() else kotlin.math.ceil(computeTargetWidthPx()).toInt()
     }
 
     fun getDesiredHeightPx(): Int {
@@ -277,10 +284,39 @@ class DotView(context: Context) : View(context) {
 
     private fun animateToTargetWidth() {
         val target = computeTargetWidthPx()
-        if (animatedWidth != target) {
+        if (animatedWidth <= 0f) {
             animatedWidth = target
+            onSizeChanged?.invoke()
             requestLayout()
             invalidate()
+            return
+        }
+
+        if (kotlin.math.abs(animatedWidth - target) < 1f) return
+
+        widthAnimator?.cancel()
+        widthAnimator = ValueAnimator.ofFloat(animatedWidth, target).apply {
+            duration = 240
+            interpolator = AccelerateDecelerateInterpolator()
+            addUpdateListener {
+                animatedWidth = it.animatedValue as Float
+                onSizeChanged?.invoke()
+                requestLayout()
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    private fun measureCenterContentWidth(): Float {
+        return when (currentState) {
+            AssistantState.IDLE -> measureIdlePromptWidth(textPaint.textSize, includeIcon = true)
+            AssistantState.THINKING -> {
+                val base = pillStrings.thinking.trim().trimEnd('.', '…')
+                textPaint.measureText(base) + textPaint.measureText(".") * 3f
+            }
+            AssistantState.NEED_SCREENSHOT -> textPaint.measureText(pillStrings.shareScreen)
+            AssistantState.LISTENING, AssistantState.SPEAKING -> dp(92f)
         }
     }
 
@@ -310,20 +346,25 @@ class DotView(context: Context) : View(context) {
         val rect = RectF(left, top, left + pillWidth, top + pillHeight)
         lastPillRect = rect
 
-        // Shadow
-        canvas.drawRoundRect(rect, pillRadius, pillRadius, shadowPaint)
-
         // Dark gradient background
         pillPaint.shader = LinearGradient(
             rect.left, rect.top, rect.right, rect.bottom,
-            COLOR_PILL_BG_START, COLOR_PILL_BG_END,
+            intArrayOf(COLOR_PILL_BG_START, COLOR_PILL_BG_MID, COLOR_PILL_BG_END),
+            floatArrayOf(0f, 0.56f, 1f),
             Shader.TileMode.CLAMP
         )
         canvas.drawRoundRect(rect, pillRadius, pillRadius, pillPaint)
         pillPaint.shader = null
 
-        // Light gray outline
+        // Gradient outline (cyan -> blue -> purple)
+        outlinePaint.shader = LinearGradient(
+            rect.left, rect.top, rect.right, rect.bottom,
+            intArrayOf(COLOR_OUTLINE_START, COLOR_OUTLINE_MID, COLOR_OUTLINE_END),
+            floatArrayOf(0f, 0.55f, 1f),
+            Shader.TileMode.CLAMP
+        )
         canvas.drawRoundRect(rect, pillRadius, pillRadius, outlinePaint)
+        outlinePaint.shader = null
 
         val centerY = rect.centerY()
 
@@ -333,12 +374,17 @@ class DotView(context: Context) : View(context) {
         micIconRect.setEmpty()
 
         val circleRadius = dp(PILL_HEIGHT_DP) / 2f - dp(4f)
-        val (centerColor, edgeColor) = when (currentState) {
+        val (stateCenterColor, stateEdgeColor) = when (currentState) {
             AssistantState.IDLE -> circleColorIdleCenter to circleColorIdleEdge
             AssistantState.LISTENING -> circleColorListeningCenter to circleColorListeningEdge
             AssistantState.THINKING -> circleColorThinkingCenter to circleColorThinkingEdge
             AssistantState.NEED_SCREENSHOT -> circleColorNeedScreenshotCenter to circleColorNeedScreenshotEdge
             AssistantState.SPEAKING -> circleColorSpeakingCenter to circleColorSpeakingEdge
+        }
+        val (centerColor, edgeColor) = if (connectionState == ConnectionState.CONNECTED) {
+            stateCenterColor to stateEdgeColor
+        } else {
+            circleColorOfflineCenter to circleColorOfflineEdge
         }
 
         when (currentState) {
@@ -389,24 +435,19 @@ class DotView(context: Context) : View(context) {
                     else -> {
                         val text = statusText()
                         if (text.isNotBlank()) {
-                            val maxTextWidth = centerZoneRight - centerZoneLeft
-                            val displayText = ellipsize(text, maxTextWidth)
-                            val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
-                            val textWidth = textPaint.measureText(displayText)
-                            val textX = centerZoneLeft + (maxTextWidth - textWidth) / 2f
-                            canvas.drawText(displayText, textX, textY, textPaint)
+                            drawCenteredTextAutoFit(
+                                canvas = canvas,
+                                text = text,
+                                left = centerZoneLeft,
+                                right = centerZoneRight,
+                                centerY = centerY
+                            )
                         }
                     }
                 }
             }
         }
 
-        // Connection status dot
-        if (connectionState != ConnectionState.CONNECTED) {
-            val color = if (connectionState == ConnectionState.RECONNECTING) COLOR_RECONNECTING else COLOR_DISCONNECTED
-            statusDotPaint.color = color
-            canvas.drawCircle(rect.right - dp(10f), rect.bottom - dp(6f), dp(3.5f), statusDotPaint)
-        }
     }
 
     private fun drawGradientCircleWithIcon(
@@ -490,66 +531,138 @@ class DotView(context: Context) : View(context) {
         }
     }
 
+    private data class IdlePromptLayout(
+        val leadingText: String,
+        val trailingText: String,
+        val showMicInline: Boolean
+    )
+
+    private fun idlePromptLayout(): IdlePromptLayout {
+        val template = pillStrings.idlePrompt?.trim().orEmpty()
+        if (template.isNotEmpty()) {
+            val token = "{mic}"
+            val idx = template.indexOf(token)
+            if (idx >= 0) {
+                val leading = template.substring(0, idx).trim()
+                val trailing = template.substring(idx + token.length).trim()
+                return IdlePromptLayout(
+                    leadingText = leading,
+                    trailingText = trailing,
+                    showMicInline = true
+                )
+            }
+            return IdlePromptLayout(
+                leadingText = template,
+                trailingText = "",
+                showMicInline = false
+            )
+        }
+
+        // Backward-compatible fallback for older language packs.
+        return IdlePromptLayout(
+            leadingText = pillStrings.tapPrefix,
+            trailingText = pillStrings.tapSuffix,
+            showMicInline = true
+        )
+    }
+
+    private fun measureIdlePromptWidth(textSizePx: Float, includeIcon: Boolean): Float {
+        val layout = idlePromptLayout()
+        val savedTextSize = textPaint.textSize
+        textPaint.textSize = textSizePx
+
+        val leadingWidth = textPaint.measureText(layout.leadingText)
+        val trailingWidth = textPaint.measureText(layout.trailingText)
+        val showIcon = includeIcon && layout.showMicInline
+        val iconWidth = if (showIcon) dp(INLINE_TEXT_ICON_SIZE_DP) else 0f
+        val gapBefore = if (showIcon && layout.leadingText.isNotBlank()) dp(INLINE_TEXT_ICON_GAP_DP) else 0f
+        val gapAfter = if (showIcon && layout.trailingText.isNotBlank()) dp(INLINE_TEXT_ICON_GAP_DP) else 0f
+
+        textPaint.textSize = savedTextSize
+        return leadingWidth + gapBefore + iconWidth + gapAfter + trailingWidth
+    }
+
     private fun drawIdlePrompt(canvas: Canvas, left: Float, right: Float, centerY: Float) {
         val maxTextWidth = right - left
         if (maxTextWidth <= 0f) return
 
         val mutedPaint = textPaint
         val savedColor = mutedPaint.color
+        val savedTextSize = mutedPaint.textSize
         mutedPaint.color = COLOR_TEXT_MUTED
 
-        val prefix = pillStrings.tapPrefix
-        val suffix = pillStrings.tapSuffix
-        val prefixWidth = mutedPaint.measureText(prefix)
-        val suffixWidth = mutedPaint.measureText(suffix)
-        val iconSizePx = dp(INLINE_TEXT_ICON_SIZE_DP)
-        val gapPx = dp(INLINE_TEXT_ICON_GAP_DP)
-        val totalWidth = prefixWidth + gapPx + iconSizePx + gapPx + suffixWidth
+        val layout = idlePromptLayout()
+        var scale = 1f
+        var leadingWidth = mutedPaint.measureText(layout.leadingText)
+        var trailingWidth = mutedPaint.measureText(layout.trailingText)
+        val showIcon = layout.showMicInline
+        var iconSizePx = if (showIcon) dp(INLINE_TEXT_ICON_SIZE_DP) else 0f
+        var gapBefore = if (showIcon && layout.leadingText.isNotBlank()) dp(INLINE_TEXT_ICON_GAP_DP) else 0f
+        var gapAfter = if (showIcon && layout.trailingText.isNotBlank()) dp(INLINE_TEXT_ICON_GAP_DP) else 0f
+        var totalWidth = leadingWidth + gapBefore + iconSizePx + gapAfter + trailingWidth
 
         if (totalWidth > maxTextWidth) {
-            val fallback = ellipsize("$prefix $suffix", maxTextWidth)
-            if (fallback.isBlank()) {
-                mutedPaint.color = savedColor
-                return
-            }
-            val textY = centerY - (mutedPaint.ascent() + mutedPaint.descent()) / 2f
-            val textX = left + (maxTextWidth - mutedPaint.measureText(fallback)) / 2f
-            canvas.drawText(fallback, textX, textY, mutedPaint)
-            mutedPaint.color = savedColor
-            return
+            scale = (maxTextWidth / totalWidth).coerceAtLeast(0.82f)
+            mutedPaint.textSize = savedTextSize * scale
+            leadingWidth = mutedPaint.measureText(layout.leadingText)
+            trailingWidth = mutedPaint.measureText(layout.trailingText)
+            iconSizePx = if (showIcon) dp(INLINE_TEXT_ICON_SIZE_DP) * scale else 0f
+            gapBefore = if (showIcon && layout.leadingText.isNotBlank()) dp(INLINE_TEXT_ICON_GAP_DP) * scale else 0f
+            gapAfter = if (showIcon && layout.trailingText.isNotBlank()) dp(INLINE_TEXT_ICON_GAP_DP) * scale else 0f
+            totalWidth = leadingWidth + gapBefore + iconSizePx + gapAfter + trailingWidth
         }
 
         val startX = left + (maxTextWidth - totalWidth) / 2f
         val textY = centerY - (mutedPaint.ascent() + mutedPaint.descent()) / 2f
-        canvas.drawText(prefix, startX, textY, mutedPaint)
+        var cursorX = startX
 
-        val iconCenterX = startX + prefixWidth + gapPx + iconSizePx / 2f
-        drawIcon(
-            canvas = canvas,
-            paths = micPaths,
-            cx = iconCenterX,
-            cy = centerY,
-            sizeDp = INLINE_TEXT_ICON_SIZE_DP,
-            rotation = 0f,
-            color = COLOR_TEXT_MUTED,
-            strokeWidthDp = INLINE_TEXT_ICON_STROKE_DP
-        )
+        if (layout.leadingText.isNotBlank()) {
+            canvas.drawText(layout.leadingText, cursorX, textY, mutedPaint)
+            cursorX += leadingWidth
+        }
 
-        val suffixX = iconCenterX + iconSizePx / 2f + gapPx
-        canvas.drawText(suffix, suffixX, textY, mutedPaint)
+        if (showIcon) {
+            cursorX += gapBefore
+            val iconCenterX = cursorX + iconSizePx / 2f
+            drawIcon(
+                canvas = canvas,
+                paths = micPaths,
+                cx = iconCenterX,
+                cy = centerY,
+                sizeDp = INLINE_TEXT_ICON_SIZE_DP * scale,
+                rotation = 0f,
+                color = COLOR_TEXT_MUTED,
+                strokeWidthDp = INLINE_TEXT_ICON_STROKE_DP * scale
+            )
+            cursorX += iconSizePx + gapAfter
+        }
+
+        if (layout.trailingText.isNotBlank()) {
+            canvas.drawText(layout.trailingText, cursorX, textY, mutedPaint)
+        }
 
         mutedPaint.color = savedColor
+        mutedPaint.textSize = savedTextSize
     }
 
     private fun drawThinkingText(canvas: Canvas, left: Float, right: Float, centerY: Float) {
         val maxTextWidth = right - left
         if (maxTextWidth <= 0f) return
 
-        val base = pillStrings.thinking
-        val dots = "..."
-        val fullText = base + dots
-        val fullWidth = textPaint.measureText(fullText)
-        if (fullWidth > maxTextWidth) return
+        val base = pillStrings.thinking.trim().trimEnd('.', '…')
+        if (base.isBlank()) return
+
+        val savedTextSize = textPaint.textSize
+        var dotWidth = textPaint.measureText(".")
+        var fullWidth = textPaint.measureText(base) + dotWidth * 3f
+        if (fullWidth > maxTextWidth) {
+            val scale = (maxTextWidth / fullWidth).coerceAtLeast(0.82f)
+            textPaint.textSize = savedTextSize * scale
+            dotWidth = textPaint.measureText(".")
+            fullWidth = textPaint.measureText(base) + dotWidth * 3f
+        }
+
+        val baseWidth = textPaint.measureText(base)
 
         // Position so "Thinking..." is always centered
         val startX = left + (maxTextWidth - fullWidth) / 2f
@@ -559,8 +672,6 @@ class DotView(context: Context) : View(context) {
         canvas.drawText(base, startX, textY, textPaint)
 
         // Draw each dot with fade-in based on phase
-        val baseWidth = textPaint.measureText(base)
-        val dotWidth = textPaint.measureText(".")
         val savedAlpha = textPaint.alpha
         for (i in 0 until 3) {
             // phase 0..4: dot i fades in during phase i..i+1, stays visible until phase wraps
@@ -569,6 +680,31 @@ class DotView(context: Context) : View(context) {
             canvas.drawText(".", startX + baseWidth + dotWidth * i, textY, textPaint)
         }
         textPaint.alpha = savedAlpha
+        textPaint.textSize = savedTextSize
+    }
+
+    private fun drawCenteredTextAutoFit(
+        canvas: Canvas,
+        text: String,
+        left: Float,
+        right: Float,
+        centerY: Float
+    ) {
+        val maxTextWidth = right - left
+        if (maxTextWidth <= 0f) return
+
+        val savedTextSize = textPaint.textSize
+        var width = textPaint.measureText(text)
+        if (width > maxTextWidth) {
+            val scale = (maxTextWidth / width).coerceAtLeast(0.82f)
+            textPaint.textSize = savedTextSize * scale
+            width = textPaint.measureText(text)
+        }
+
+        val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
+        val textX = left + (maxTextWidth - width) / 2f
+        canvas.drawText(text, textX, textY, textPaint)
+        textPaint.textSize = savedTextSize
     }
 
     private fun drawIcon(
@@ -614,22 +750,17 @@ class DotView(context: Context) : View(context) {
 
     private fun statusText(): String {
         return when (currentState) {
-            AssistantState.IDLE -> "${pillStrings.tapPrefix} ${pillStrings.tapSuffix}"
+            AssistantState.IDLE -> {
+                val layout = idlePromptLayout()
+                listOf(layout.leadingText, layout.trailingText)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" ")
+            }
             AssistantState.LISTENING -> ""
             AssistantState.THINKING -> "" // handled by drawThinkingText
             AssistantState.NEED_SCREENSHOT -> pillStrings.shareScreen
             AssistantState.SPEAKING -> ""
         }
-    }
-
-    private fun ellipsize(text: String, maxWidth: Float): String {
-        if (maxWidth <= 0f) return ""
-        if (textPaint.measureText(text) <= maxWidth) return text
-        var trimmed = text
-        while (trimmed.isNotEmpty() && textPaint.measureText("$trimmed...") > maxWidth) {
-            trimmed = trimmed.dropLast(1)
-        }
-        return if (trimmed.isEmpty()) "" else "$trimmed..."
     }
 
     private fun dp(value: Float): Float {
@@ -648,5 +779,6 @@ class DotView(context: Context) : View(context) {
         super.onDetachedFromWindow()
         loaderAnimator.cancel()
         thinkingDotsAnimator.cancel()
+        widthAnimator?.cancel()
     }
 }
