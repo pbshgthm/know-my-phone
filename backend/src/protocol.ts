@@ -34,10 +34,18 @@ export interface SetLanguageMessage {
   languageCode: string;
 }
 
+export interface RedactionInfo {
+  type: string;
+  count: number;
+  nodeIds: string[];
+}
+
 export interface ScreenshotResponseMessage {
   type: "screenshot_response";
   screenshot: string; // base64
   uiTree: UiTree;
+  redacted?: boolean;
+  redactions?: RedactionInfo[];
 }
 
 export interface ScreenshotDeclinedMessage {

@@ -8,6 +8,7 @@ import type {
   AnalysisResult,
   Highlight,
   UiTree,
+  RedactionInfo,
 } from "../protocol.js";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -115,13 +116,29 @@ export async function triageQuery(
   };
 }
 
+function buildVisualAnalysisUserText(
+  userText: string,
+  uiTree: UiTree,
+  redactions?: RedactionInfo[]
+): string {
+  let text = `User question: ${userText}\n\nUI Tree:\n${JSON.stringify(uiTree, null, 2)}`;
+  if (redactions && redactions.length > 0) {
+    text += "\n\nPII Redaction Notice:";
+    for (const r of redactions) {
+      text += `\n- ${r.type}: ${r.count} instance(s) in nodes [${r.nodeIds.join(", ")}]`;
+    }
+  }
+  return text;
+}
+
 export async function visualAnalysis(
   userText: string,
   screenshotBase64: string,
   uiTree: UiTree,
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
   signal?: AbortSignal,
-  autoScreenshot: boolean = false
+  autoScreenshot: boolean = false,
+  redactions?: RedactionInfo[]
 ): Promise<AnalysisResult> {
   const messages: ChatMessage[] = [
     { role: "system", content: getVisualAnalysisPrompt(autoScreenshot) },
@@ -134,7 +151,7 @@ export async function visualAnalysis(
       content: [
         {
           type: "text",
-          text: `User question: ${userText}\n\nUI Tree:\n${JSON.stringify(uiTree, null, 2)}`,
+          text: buildVisualAnalysisUserText(userText, uiTree, redactions),
         },
         {
           type: "image_url",

@@ -7,6 +7,7 @@ import type {
   ErrorMessage,
   Highlight,
   UiTree,
+  RedactionInfo,
 } from '../protocol.js';
 
 describe('Protocol Message Types', () => {
@@ -79,5 +80,56 @@ describe('Protocol Message Types', () => {
       message: 'Something went wrong',
     };
     expect(error.type).toBe('error');
+  });
+
+  it('should support ScreenshotResponseMessage with redaction fields', () => {
+    const uiTree: UiTree = {
+      screen: { packageName: 'com.test', timestamp: 123456 },
+      nodes: [
+        {
+          id: 'n_1',
+          text: '[REDACTED:PHONE_NUMBER]',
+          contentDescription: null,
+          className: 'TextView',
+          clickable: false,
+          enabled: true,
+          bounds: { left: 0, top: 0, right: 200, bottom: 50 },
+        },
+      ],
+    };
+
+    const redactions: RedactionInfo[] = [
+      { type: '[REDACTED:PHONE_NUMBER]', count: 1, nodeIds: ['n_1'] },
+    ];
+
+    const msg: ScreenshotResponseMessage = {
+      type: 'screenshot_response',
+      screenshot: 'base64string',
+      uiTree,
+      redacted: true,
+      redactions,
+    };
+    expect(msg.type).toBe('screenshot_response');
+    expect(msg.redacted).toBe(true);
+    expect(msg.redactions).toHaveLength(1);
+    expect(msg.redactions![0].type).toBe('[REDACTED:PHONE_NUMBER]');
+    expect(msg.redactions![0].count).toBe(1);
+    expect(msg.redactions![0].nodeIds).toEqual(['n_1']);
+  });
+
+  it('should support ScreenshotResponseMessage without redaction fields (backward compat)', () => {
+    const uiTree: UiTree = {
+      screen: { packageName: 'com.test', timestamp: 123456 },
+      nodes: [],
+    };
+
+    const msg: ScreenshotResponseMessage = {
+      type: 'screenshot_response',
+      screenshot: 'base64string',
+      uiTree,
+    };
+    expect(msg.type).toBe('screenshot_response');
+    expect(msg.redacted).toBeUndefined();
+    expect(msg.redactions).toBeUndefined();
   });
 });

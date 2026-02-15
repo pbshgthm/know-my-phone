@@ -10,6 +10,7 @@ import com.knowyourphone.app.audio.AudioPlayer
 import com.knowyourphone.app.audio.AudioRecorder
 import com.knowyourphone.app.model.HighlightTarget
 import com.knowyourphone.app.network.*
+import com.knowyourphone.app.privacy.PiiRedactor
 import com.knowyourphone.app.util.WavEncoder
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -496,25 +497,43 @@ class AssistantViewModel(
                         return@io
                     }
 
+                    // Redact PII from UI tree
+                    val redactionResult = PiiRedactor.redactUiTree(uiTree)
+                    val hasPii = redactionResult.nodeRedactions.isNotEmpty()
+                    if (hasPii) {
+                        Log.d(TAG, "PII redacted: ${redactionResult.summaries.size} types found")
+                    }
+
+                    // Redact PII regions on bitmap if needed
+                    val finalBitmap = if (hasPii) {
+                        val redacted = PiiRedactor.redactBitmap(bitmap, redactionResult.nodeRedactions)
+                        bitmap.recycle()
+                        redacted
+                    } else {
+                        bitmap
+                    }
+
                     // Encode bitmap to JPEG base64
                     val baos = ByteArrayOutputStream()
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 70, baos)
-                    bitmap.recycle()
+                    finalBitmap.compress(Bitmap.CompressFormat.JPEG, 70, baos)
+                    finalBitmap.recycle()
                     val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
 
-                    // Convert UI tree to JsonObject
-                    val uiTreeJson = gson.toJsonTree(uiTree).asJsonObject
+                    // Convert redacted UI tree to JsonObject
+                    val uiTreeJson = gson.toJsonTree(redactionResult.redactedSnapshot).asJsonObject
 
                     val msg = ScreenshotResponseMessage(
                         screenshot = base64,
-                        uiTree = uiTreeJson
+                        uiTree = uiTreeJson,
+                        redacted = hasPii,
+                        redactions = if (hasPii) redactionResult.summaries else emptyList()
                     )
                     val sent = wsClient.sendText(MessageParser.toJson(msg))
                     if (!sent) {
                         Log.e(TAG, "Failed to send screenshot response")
                         withContext(Dispatchers.Main) { _state.value = AssistantState.IDLE }
                     } else {
-                        Log.d(TAG, "Sent screenshot response")
+                        Log.d(TAG, "Sent screenshot response (redacted=$hasPii)")
                     }
                 }
             }

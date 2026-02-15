@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.annotations.SerializedName
 import com.knowyourphone.app.model.HighlightTarget
+import com.knowyourphone.app.privacy.RedactionSummary
 
 // --- Client -> Server messages ---
 
@@ -31,7 +32,9 @@ data class SetLanguageMessage(
 data class ScreenshotResponseMessage(
     val type: String = "screenshot_response",
     val screenshot: String, // base64 JPEG
-    val uiTree: JsonObject
+    val uiTree: JsonObject,
+    val redacted: Boolean = false,
+    val redactions: List<RedactionSummary> = emptyList()
 )
 
 data class ScreenshotDeclinedMessage(

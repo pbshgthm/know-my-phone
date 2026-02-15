@@ -5,6 +5,7 @@ import type {
   ScreenshotResponseMessage,
   AnalysisResult,
   UiTree,
+  RedactionInfo,
 } from "./protocol.js";
 import { addToHistory, getHistoryForLLM } from "./session.js";
 import { transcribeAudio, textToSpeech } from "./services/elevenlabs.js";
@@ -195,6 +196,10 @@ export async function handleAudioReceived(
           const msg = pending.bufferedScreenshot;
           pendingScreenshots.delete(session.id);
 
+          if (msg.redacted) {
+            console.log(`[${session.id}] 🔒 Screenshot has PII redactions: ${msg.redactions?.length ?? 0} types`);
+          }
+
           // Save buffered screenshot + UI tree to disk
           saveTiming(session.clientId, session.id, turnId, {
             screenshotReceivedAt: Date.now(),
@@ -213,7 +218,8 @@ export async function handleAudioReceived(
             msg.uiTree,
             getHistoryForLLM(session),
             signal,
-            session.autoScreenshot
+            session.autoScreenshot,
+            msg.redactions
           );
           saveTiming(session.clientId, session.id, turnId, { analysisCompletedAt: Date.now() });
           await sendAnswer(ws, session, result, signal, transcript);
@@ -340,6 +346,9 @@ export async function handleScreenshotResponse(
     .catch((err) => console.error(`[DataStore] Failed to save UI tree:`, err));
 
   try {
+    if (message.redacted) {
+      console.log(`[${session.id}] 🔒 Screenshot has PII redactions: ${message.redactions?.length ?? 0} types`);
+    }
     console.log(`[${session.id}] Running visual analysis with screenshot...`);
     saveTiming(session.clientId, session.id, turnId, { analysisStartedAt: Date.now() });
     const result = await visualAnalysis(
@@ -348,7 +357,8 @@ export async function handleScreenshotResponse(
       message.uiTree,
       getHistoryForLLM(session),
       signal,
-      session.autoScreenshot
+      session.autoScreenshot,
+      message.redactions
     );
     saveTiming(session.clientId, session.id, turnId, { analysisCompletedAt: Date.now() });
 
