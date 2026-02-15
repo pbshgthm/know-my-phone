@@ -65,6 +65,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlayRow: LinearLayout
     private lateinit var accessibilityRow: LinearLayout
     private lateinit var autoShareSwitch: MaterialSwitch
+    private lateinit var serverEndpointSwitch: MaterialSwitch
+    private lateinit var serverEndpointTitle: TextView
+    private lateinit var serverEndpointSubtitle: TextView
 
     // Views that need localization updates
     private lateinit var titleText: TextView
@@ -350,6 +353,62 @@ class MainActivity : AppCompatActivity() {
         autoShareRow.addView(autoShareSwitch)
         root.addView(autoShareRow)
 
+        // --- Server endpoint toggle (dev vs prod) ---
+        val devUrl = "ws://localhost:8765"
+        val prodUrl = "wss://know-my-phone.replit.app"
+        val serverEndpointRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, dp(4), dp(24))
+        }
+
+        val serverEndpointTextColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+        }
+        serverEndpointTitle = TextView(this).apply {
+            text = appStrings.serverEndpoint
+            textSize = scaledSp(15f)
+            setTextColor(COLOR_TEXT_PRIMARY)
+        }
+        serverEndpointTextColumn.addView(serverEndpointTitle)
+        serverEndpointSubtitle = TextView(this).apply {
+            text = appStrings.serverEndpointSub
+            textSize = scaledSp(12f)
+            setTextColor(COLOR_TEXT_TERTIARY)
+            setPadding(0, dp(2), 0, 0)
+        }
+        serverEndpointTextColumn.addView(serverEndpointSubtitle)
+
+        val serverPrefs = getSharedPreferences("kyp_prefs", MODE_PRIVATE)
+        val currentServerUrl = serverPrefs.getString("server_url", devUrl) ?: devUrl
+        serverEndpointSwitch = MaterialSwitch(this).apply {
+            isChecked = currentServerUrl == prodUrl
+            trackTintList = ColorStateList(
+                arrayOf(
+                    intArrayOf(android.R.attr.state_checked),
+                    intArrayOf()
+                ),
+                intArrayOf(COLOR_ACCENT, COLOR_BORDER)
+            )
+            thumbTintList = ColorStateList(
+                arrayOf(
+                    intArrayOf(android.R.attr.state_checked),
+                    intArrayOf()
+                ),
+                intArrayOf(Color.WHITE, 0xFFF3F4F6.toInt())
+            )
+            setOnCheckedChangeListener { _, isChecked ->
+                val serverUrl = if (isChecked) prodUrl else devUrl
+                serverPrefs.edit().putString("server_url", serverUrl).apply()
+                OverlayService.instance?.reconnectToServer(serverUrl)
+            }
+        }
+
+        serverEndpointRow.addView(serverEndpointTextColumn)
+        serverEndpointRow.addView(serverEndpointSwitch)
+        root.addView(serverEndpointRow)
+
         scrollView.addView(root, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         coordinatorLayout.addView(scrollView, CoordinatorLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         setContentView(coordinatorLayout)
@@ -406,6 +465,8 @@ class MainActivity : AppCompatActivity() {
         languageLabel.text = s.language
         autoShareTitle.text = s.autoShare
         autoShareSubtitle.text = s.autoShareSub
+        serverEndpointTitle.text = s.serverEndpoint
+        serverEndpointSubtitle.text = s.serverEndpointSub
         micLabelText.text = s.micLabel
         micGrantBtn.text = s.grant
         overlayLabelText.text = s.overlayLabel
@@ -541,6 +602,8 @@ class MainActivity : AppCompatActivity() {
         languageLabel.textSize = scaledSp(13f)
         autoShareTitle.textSize = scaledSp(15f)
         autoShareSubtitle.textSize = scaledSp(12f)
+        serverEndpointTitle.textSize = scaledSp(15f)
+        serverEndpointSubtitle.textSize = scaledSp(12f)
 
         micLabelText.textSize = scaledSp(14f)
         micGrantBtn.textSize = scaledSp(12f)

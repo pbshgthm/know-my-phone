@@ -1,3 +1,26 @@
+/** User is from India. Understand Indian apps (GPay, PhonePe, UPI, BHIM, Paytm), regional conventions, and local context. */
+const INDIA_CONTEXT = `
+User context: The user is from India. When relevant, understand Indian apps (UPI, GPay, PhonePe, Paytm, BHIM), Indian numbering, and local UI conventions.`;
+
+/** Strict language instruction — reply only in the specified language, never switch. */
+function languageInstruction(languageCode: string): string {
+	const langNames: Record<string, string> = {
+		en: "English",
+		hi: "Hindi",
+		ta: "Tamil",
+		te: "Telugu",
+		kn: "Kannada",
+		ml: "Malayalam",
+		mr: "Marathi",
+		bn: "Bengali",
+		gu: "Gujarati",
+	};
+	const lang =
+		langNames[languageCode] || "the same language as the user's message";
+	return `
+STRICT: Reply ONLY in ${lang}. Never switch to another language mid-response. Never mix languages. If the user speaks in ${lang}, your entire response must be in ${lang}.`;
+}
+
 const VOICE_DELIVERY_INSTRUCTIONS = `
 Voice delivery instructions:
 - Your answer will be spoken aloud using ElevenLabs TTS.
@@ -59,13 +82,21 @@ Privacy note: Screenshots and UI trees may be automatically redacted. When redac
 
 Your job:
 - Answer the user's question clearly and concisely, as if speaking to them (this will be read aloud via TTS)
+- Be crisp: 1-2 sentences preferred, 3 max only when needed. Never be verbose.
+- On follow-ups, do NOT repeat what you or the user already said — only add new information.
 - If relevant, identify specific UI elements the user should interact with
-- Keep answers short and natural-sounding (2-3 sentences max)
 - Be friendly and helpful, like a patient tech support person
 ${VOICE_DELIVERY_INSTRUCTIONS}
 
 Conversation history:
 - Messages include timestamps indicating when they were said — use these to gauge relevance of older context.
+- Do NOT re-explain or summarize previous answers. Be additive only.
+
+Element selection for highlights (CRITICAL — wrong IDs break highlighting):
+- Each UI tree node has an "id" field (e.g. n_7). Use the EXACT id string — never invent or guess.
+- Prefer LEAF nodes that are clickable/tappable. Avoid parent/container nodes that wrap multiple elements.
+- When several nodes match (e.g. same text), pick the one with clickable: true and the most specific match to the element in the screenshot.
+- Verify the node's bounds roughly match the element's on-screen position before using its id.
 
 Highlight rubric:
 - Be highly selective: prefer 0-2 highlights, 3 max only if required.
@@ -125,15 +156,23 @@ Privacy note: Screenshots and UI trees may be automatically redacted. When redac
 
 Your job:
 - Answer the user's question clearly and concisely, as if speaking to them (this will be read aloud via TTS)
+- Be crisp: 1-2 sentences preferred, 3 max only when needed. Never be verbose.
+- On follow-ups, do NOT repeat what you or the user already said — only add new information.
 - IMPORTANT: If the UI tree is empty or has no nodes, you CANNOT see the screen. Don't hallucinate or make up screen content.
 - If you cannot answer without screen data, politely explain that you need to see the screen first.
 - If relevant and UI tree has data, identify specific UI elements the user should interact with
-- Keep answers short and natural-sounding (2-3 sentences max)
 - Be friendly and helpful, like a patient tech support person
 ${VOICE_DELIVERY_INSTRUCTIONS}
 
 Conversation history:
 - Messages include timestamps indicating when they were said — use these to gauge relevance of older context.
+- Do NOT re-explain or summarize previous answers. Be additive only.
+
+Element selection for highlights (CRITICAL — wrong IDs break highlighting):
+- Each UI tree node has an "id" field (e.g. n_7). Use the EXACT id string — never invent or guess.
+- Prefer LEAF nodes that are clickable/tappable. Avoid parent/container nodes that wrap multiple elements.
+- When several nodes match (e.g. same text), pick the one with clickable: true and the most specific match to the element described.
+- Verify the node's bounds roughly match the element's position in the UI tree layout.
 
 Highlight rubric:
 - Be highly selective: prefer 0-2 highlights, 3 max only if required.
@@ -185,33 +224,51 @@ const AUTO_SHARE_TRIAGE_NOTE = `\n\nNote: The user has manual screenshot sharing
 const AUTO_SHARE_TEXT_NOTE = `\n\nNote: The user has manual screenshot sharing mode. If you need screen data to answer properly, explain clearly why seeing the screen would help.`;
 
 interface DeviceInfo {
-  manufacturer: string;
-  model: string;
-  androidVersion: string;
+	manufacturer: string;
+	model: string;
+	androidVersion: string;
 }
 
 function deviceNote(deviceInfo?: DeviceInfo): string {
-  if (!deviceInfo) return "";
-  return `\n\nDevice: ${deviceInfo.manufacturer} ${deviceInfo.model}, Android ${deviceInfo.androidVersion}.`;
+	if (!deviceInfo) return "";
+	return `\n\nDevice: ${deviceInfo.manufacturer} ${deviceInfo.model}, Android ${deviceInfo.androidVersion}.`;
 }
 
-export function getVisualAnalysisPrompt(autoScreenshot: boolean, deviceInfo?: DeviceInfo): string {
-  let prompt = VISUAL_ANALYSIS_SYSTEM_PROMPT;
-  if (autoScreenshot) prompt += AUTO_SHARE_VISUAL_NOTE;
-  prompt += deviceNote(deviceInfo);
-  return prompt;
+export function getVisualAnalysisPrompt(
+	autoScreenshot: boolean,
+	deviceInfo?: DeviceInfo,
+	languageCode: string = "en",
+): string {
+	let prompt = VISUAL_ANALYSIS_SYSTEM_PROMPT;
+	if (autoScreenshot) prompt += AUTO_SHARE_VISUAL_NOTE;
+	prompt += deviceNote(deviceInfo);
+	prompt += INDIA_CONTEXT;
+	prompt += languageInstruction(languageCode);
+	return prompt;
 }
 
-export function getTriagePrompt(autoScreenshot: boolean, deviceInfo?: DeviceInfo): string {
-  let prompt = TRIAGE_SYSTEM_PROMPT;
-  if (!autoScreenshot) prompt += AUTO_SHARE_TRIAGE_NOTE;
-  prompt += deviceNote(deviceInfo);
-  return prompt;
+export function getTriagePrompt(
+	autoScreenshot: boolean,
+	deviceInfo?: DeviceInfo,
+	languageCode: string = "en",
+): string {
+	let prompt = TRIAGE_SYSTEM_PROMPT;
+	if (!autoScreenshot) prompt += AUTO_SHARE_TRIAGE_NOTE;
+	prompt += deviceNote(deviceInfo);
+	prompt += INDIA_CONTEXT;
+	prompt += languageInstruction(languageCode);
+	return prompt;
 }
 
-export function getTextAnalysisPrompt(autoScreenshot: boolean, deviceInfo?: DeviceInfo): string {
-  let prompt = TEXT_ANALYSIS_SYSTEM_PROMPT;
-  if (!autoScreenshot) prompt += AUTO_SHARE_TEXT_NOTE;
-  prompt += deviceNote(deviceInfo);
-  return prompt;
+export function getTextAnalysisPrompt(
+	autoScreenshot: boolean,
+	deviceInfo?: DeviceInfo,
+	languageCode: string = "en",
+): string {
+	let prompt = TEXT_ANALYSIS_SYSTEM_PROMPT;
+	if (!autoScreenshot) prompt += AUTO_SHARE_TEXT_NOTE;
+	prompt += deviceNote(deviceInfo);
+	prompt += INDIA_CONTEXT;
+	prompt += languageInstruction(languageCode);
+	return prompt;
 }

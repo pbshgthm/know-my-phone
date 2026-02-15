@@ -25,7 +25,7 @@
 - [ ] Convert queries into skills and integrate skills search
 
 ## PUBLISHING
-- [ ] Update README and ARCHITECTURE.md
+- [ ] Update README and how-it-works.md
 - [ ] Create LICENSE
 - [ ] Create a demo video
 - [ ] Setup releases on github

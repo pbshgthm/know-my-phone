@@ -126,6 +126,13 @@ class OverlayService : Service() {
         viewModel.setAutoScreenshot(enabled)
     }
 
+    /**
+     * Reconnect to a different server URL (e.g. when user toggles dev/prod).
+     */
+    fun reconnectToServer(url: String) {
+        viewModel.reconnectToServer(url)
+    }
+
     private fun createNotificationChannel() {
         val strings = currentAppStrings()
         val channel = NotificationChannel(

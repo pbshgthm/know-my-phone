@@ -92,22 +92,28 @@ function toggleTurnCollapsed(turnId) {
 // --- Formatting ---
 /** Convert ISO string to epoch ms, or return null */
 function ms(iso) {
-  if (!iso) return null;
-  return new Date(iso).getTime();
+  if (!iso || typeof iso !== 'string') return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : null;
 }
 /** Duration between two ISO strings in ms, or null */
 function dur(startIso, endIso) {
-  if (!startIso || !endIso) return null;
-  return new Date(endIso).getTime() - new Date(startIso).getTime();
+  const s = ms(startIso);
+  const e = ms(endIso);
+  if (s == null || e == null || e < s) return null;
+  return e - s;
 }
 function fmtTime(v) {
   if (!v) return '--';
   const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '--';
   return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})
     + '.' + String(d.getMilliseconds()).padStart(3,'0');
 }
 function fmtDate(v) {
+  if (!v) return '--';
   const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '--';
   return d.toLocaleDateString('en-CA') + ' ' + fmtTime(v);
 }
 function fmtDur(msVal) {
@@ -410,24 +416,34 @@ function renderTurn(t) {
     </div>`;
   }
 
-  // --- Screenshot + UI Tree side by side ---
-  if (ss.file || ss.uiTreeFile) {
-    const ssImgId = 'ssimg-'+t.turnId;
-    h += `<div class="border-b border-neutral-100 flex items-start" style="position:relative">`;
-    if (ss.file) {
-      h += `<div class="flex-shrink-0 p-3 border-r border-neutral-100" style="width:300px">
-        <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">screenshot${tm.screenshotReceivedAt ? ' \u2014 '+fmtTime(tm.screenshotReceivedAt) : ''}</div>
-        <img id="${ssImgId}" loading="lazy" src="${base}/${ss.file}"
-          class="rounded border border-neutral-200 w-full cursor-pointer hover:opacity-90 transition-opacity"
-          onclick="showModal('${base}/${ss.file}')" />
-      </div>`;
-    }
-    if (ss.uiTreeFile) {
-      const treeId = 'tree-'+t.turnId;
-      h += `<div class="flex-1 min-w-0 p-3 flex flex-col" id="treewrap-${t.turnId}">
-        <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">ui tree</div>
-        <pre id="${treeId}" class="text-[9px] bg-neutral-50 p-2 rounded overflow-auto font-mono text-neutral-500 leading-relaxed flex-1 min-h-0" style="min-height:80px">loading...</pre>
-      </div>`;
+  // --- Screenshots + UI Trees (supports multiple from next-step flow) ---
+  const ssFiles = (ss.files && ss.files.length) ? ss.files : (ss.file ? [ss.file] : []);
+  const ssTreeFiles = (ss.uiTreeFiles && ss.uiTreeFiles.length) ? ss.uiTreeFiles : (ss.uiTreeFile ? [ss.uiTreeFile] : []);
+  if (ssFiles.length || ssTreeFiles.length) {
+    const count = Math.max(ssFiles.length, ssTreeFiles.length);
+    h += `<div class="border-b border-neutral-100">`;
+    for (let i = 0; i < count; i++) {
+      const file = ssFiles[i];
+      const treeFile = ssTreeFiles[i];
+      const ssImgId = 'ssimg-'+t.turnId + (count > 1 ? '-'+i : '');
+      const treeId = 'tree-'+t.turnId + (count > 1 ? '-'+i : '');
+      const label = count > 1 ? ` #${i + 1}` : '';
+      h += `<div class="flex items-start border-b border-neutral-100 last:border-b-0" style="position:relative">`;
+      if (file) {
+        h += `<div class="flex-shrink-0 p-3 border-r border-neutral-100" style="width:300px">
+          <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">screenshot${label}${i === 0 && tm.screenshotReceivedAt ? ' \u2014 '+fmtTime(tm.screenshotReceivedAt) : ''}</div>
+          <img id="${ssImgId}" loading="lazy" src="${base}/${file}"
+            class="rounded border border-neutral-200 w-full cursor-pointer hover:opacity-90 transition-opacity"
+            onclick="showModal('${base}/${file}')" />
+        </div>`;
+      }
+      if (treeFile) {
+        h += `<div class="flex-1 min-w-0 p-3 flex flex-col" id="treewrap-${t.turnId}${count > 1 ? '-'+i : ''}">
+          <div class="text-[9px] text-neutral-400 uppercase tracking-wider mb-1">ui tree${label}</div>
+          <pre id="${treeId}" class="text-[9px] bg-neutral-50 p-2 rounded overflow-auto font-mono text-neutral-500 leading-relaxed flex-1 min-h-0" style="min-height:80px">loading...</pre>
+        </div>`;
+      }
+      h += `</div>`;
     }
     h += `</div>`;
   }
@@ -444,7 +460,9 @@ function renderTurn(t) {
           <div class="mt-1 flex flex-wrap gap-1.5">`;
         out.highlights.forEach(hl => {
           const bounds = hl.bounds ? ` [${hl.bounds.left},${hl.bounds.top} ${hl.bounds.right},${hl.bounds.bottom}]` : '';
-          h += `<span class="text-[10px] px-2 py-0.5 rounded bg-neutral-100 text-neutral-600 border border-neutral-200">
+          const locatable = hl.elementId ? `cursor-pointer hover:bg-amber-100 hover:border-amber-300` : '';
+          const clickHandler = hl.elementId ? `onclick="scrollToTreeNode('${esc(hl.elementId)}')" title="Click to locate in tree"` : '';
+          h += `<span class="text-[10px] px-2 py-0.5 rounded bg-neutral-100 text-neutral-600 border border-neutral-200 ${locatable}" ${clickHandler}>
             <span class="text-neutral-800">${esc(hl.label)}</span>
             ${hl.elementId ? `<span class="text-neutral-400 ml-1">${esc(hl.elementId)}</span>` : ''}
             ${bounds ? `<span class="text-neutral-300 ml-1">${bounds}</span>` : ''}
@@ -468,21 +486,24 @@ function renderTurn(t) {
   el.innerHTML = h;
   if (collapsed) el.classList.add('turn-card--collapsed');
 
-  // Auto-load UI tree
-  if (ss.uiTreeFile) {
-    const treeId = 'tree-'+t.turnId;
-    setTimeout(() => loadTree(treeId, `${base}/${ss.uiTreeFile}`), 0);
-  }
+  // Auto-load UI trees (with highlight IDs so we can locate them)
+  const ssTreeFilesForLoad = (ss.uiTreeFiles && ss.uiTreeFiles.length) ? ss.uiTreeFiles : (ss.uiTreeFile ? [ss.uiTreeFile] : []);
+  const highlightIds = (out.highlights || []).map(h => h.elementId).filter(Boolean);
+  ssTreeFilesForLoad.forEach((treeFile, i) => {
+    const treeId = 'tree-'+t.turnId + (ssTreeFilesForLoad.length > 1 ? '-'+i : '');
+    setTimeout(() => loadTree(treeId, `${base}/${treeFile}`, highlightIds), 0);
+  });
 
   // Cap UI tree column height to screenshot height; tree content scrolls inside
-  if (ss.file && ss.uiTreeFile) {
-    const ssImgId = 'ssimg-'+t.turnId;
-    const treeId = 'tree-'+t.turnId;
+  const ssFilesForSync = (ss.files && ss.files.length) ? ss.files : (ss.file ? [ss.file] : []);
+  ssFilesForSync.forEach((_, i) => {
+    const ssImgId = 'ssimg-'+t.turnId + (ssFilesForSync.length > 1 ? '-'+i : '');
+    const treeId = 'tree-'+t.turnId + (ssFilesForSync.length > 1 ? '-'+i : '');
+    const wrapId = 'treewrap-'+t.turnId + (ssFilesForSync.length > 1 ? '-'+i : '');
     setTimeout(() => {
       const img = document.getElementById(ssImgId);
-      const pre = document.getElementById(treeId);
-      const wrap = document.getElementById('treewrap-'+t.turnId);
-      if (!img || !pre || !wrap) return;
+      const wrap = document.getElementById(wrapId);
+      if (!img || !wrap) return;
       function syncHeight() {
         const screenshotHeight = img.parentElement.offsetHeight;
         if (screenshotHeight > 60) wrap.style.maxHeight = screenshotHeight + 'px';
@@ -490,35 +511,93 @@ function renderTurn(t) {
       if (img.complete) syncHeight();
       else img.addEventListener('load', syncHeight);
     }, 0);
-  }
+  });
 
   return el;
 }
 
 // --- Timing (streaming-aware two-row layout) ---
 function renderTimingTable(tm) {
+  const nowMs = Date.now();
+  const turnCompletedMs = ms(tm.completedAt);
+  const turnDone = turnCompletedMs != null;
+
+  function pickFirstValidStart(...candidates) {
+    for (const iso of candidates) {
+      if (ms(iso) != null) return iso;
+    }
+    return null;
+  }
+
+  function pickEarliestValidEnd(startIso, ...candidates) {
+    const startMs = ms(startIso);
+    if (startMs == null) return null;
+    let bestIso = null;
+    let bestMs = null;
+    for (const iso of candidates) {
+      const t = ms(iso);
+      if (t == null || t < startMs) continue;
+      if (bestMs == null || t < bestMs) {
+        bestMs = t;
+        bestIso = iso;
+      }
+    }
+    return bestIso;
+  }
+
+  function stage(label, startIso, endIso, opts = {}) {
+    if (!startIso || ms(startIso) == null) return null;
+    const fallbackEnds = Array.isArray(opts.fallbackEnds) ? opts.fallbackEnds : [];
+    const resolvedEnd = pickEarliestValidEnd(startIso, endIso, ...fallbackEnds);
+    if (resolvedEnd) {
+      return {
+        label,
+        durMs: dur(startIso, resolvedEnd),
+        done: true,
+        highlight: !!opts.highlight,
+      };
+    }
+    if (turnDone) return null;
+    const startMs = ms(startIso);
+    if (startMs == null) return null;
+    return {
+      label,
+      durMs: Math.max(0, nowMs - startMs),
+      done: false,
+      highlight: !!opts.highlight,
+    };
+  }
+
   // Row 1: pipeline stages with arrows
   const stages = [];
-  if (tm.sttStartedAt)       stages.push({ label: 'stt',     start: tm.sttStartedAt,       end: tm.sttCompletedAt });
-  if (tm.triageStartedAt)    stages.push({ label: 'triage',  start: tm.triageStartedAt,    end: tm.triageCompletedAt });
-  if (tm.screenshotRequestedAt && tm.screenshotReceivedAt) {
-    stages.push({ label: 'ss wait', start: tm.screenshotRequestedAt, end: tm.screenshotReceivedAt });
+  const sttStart = pickFirstValidStart(tm.sttStartedAt, tm.audioReceivedAt);
+  const sttStage = stage('stt', sttStart, tm.sttCompletedAt, { fallbackEnds: [tm.triageStartedAt, tm.llmStartedAt, tm.completedAt] });
+  if (sttStage) stages.push(sttStage);
+
+  const triageStage = stage('triage', tm.triageStartedAt, tm.triageCompletedAt, { fallbackEnds: [tm.screenshotRequestedAt, tm.llmStartedAt, tm.completedAt] });
+  if (triageStage) stages.push(triageStage);
+
+  const screenshotWaitStage = stage('ss wait', tm.screenshotRequestedAt, tm.screenshotReceivedAt, { fallbackEnds: [tm.llmStartedAt, tm.completedAt] });
+  if (screenshotWaitStage) stages.push(screenshotWaitStage);
+
+  // Auto-screenshot path has no explicit request timestamp.
+  if (!tm.screenshotRequestedAt && tm.screenshotReceivedAt) {
+    const captureStage = stage('capture', tm.audioReceivedAt, tm.screenshotReceivedAt);
+    if (captureStage) stages.push(captureStage);
   }
-  if (tm.llmStartedAt && tm.llmFirstTokenAt) {
-    stages.push({ label: 'llm\u21E2tok', start: tm.llmStartedAt, end: tm.llmFirstTokenAt });
-  } else if (tm.llmStartedAt && !tm.llmFirstTokenAt) {
-    stages.push({ label: 'llm\u21E2tok', start: tm.llmStartedAt, end: null });
-  }
-  if (tm.ttsFirstAudioAt && tm.audioReceivedAt) {
-    stages.push({ label: '1st\uD83D\uDD0A', start: tm.audioReceivedAt, end: tm.ttsFirstAudioAt, highlight: true });
-  }
+
+  const llmToTokenStage = stage('llm\u21E2tok', tm.llmStartedAt, tm.llmFirstTokenAt, { fallbackEnds: [tm.llmCompletedAt, tm.completedAt] });
+  if (llmToTokenStage) stages.push(llmToTokenStage);
+
+  const firstAudioStart = pickFirstValidStart(tm.llmFirstTokenAt, tm.llmStartedAt);
+  const firstAudioStage = stage('tok\u21E2\uD83D\uDD0A', firstAudioStart, tm.ttsFirstAudioAt, { fallbackEnds: [tm.completedAt], highlight: true });
+  if (firstAudioStage) stages.push(firstAudioStage);
+
   if (!stages.length) return '';
 
-  const parts = stages.map(s => {
-    const d = dur(s.start, s.end) ?? (ms(s.start) ? Date.now() - ms(s.start) : null);
-    const done = !!s.end;
+  const parts = stages.map((s) => {
     const hl = s.highlight ? ' text-neutral-900 font-semibold' : ' text-neutral-700 font-medium';
-    return `<span class="text-neutral-500">${s.label}</span> <span class="${hl.trim()}">${fmtDur(d)}</span>${done ? '' : '<span class="pulse">\u2026</span>'}`;
+    return `<span class="text-neutral-500">${s.label}</span> <span class="${hl.trim()}">${fmtDur(s.durMs)}</span>${s.done ? '' : '<span class="pulse">\u2026</span>'}`;
   });
 
   let h = `<div class="px-3 py-1 border-b border-neutral-100 flex items-center gap-1 text-[10px] flex-wrap">`;
@@ -528,16 +607,20 @@ function renderTimingTable(tm) {
   // Row 2: summary stats (only if we have at least llmStartedAt)
   if (tm.llmStartedAt) {
     const stats = [];
-    if (tm.llmCompletedAt) {
-      stats.push(`<span class="text-neutral-500">llm</span> <span class="text-neutral-700 font-medium">${fmtDur(dur(tm.llmStartedAt, tm.llmCompletedAt))}</span>`);
-    } else if (!tm.completedAt) {
-      stats.push(`<span class="text-neutral-500">llm</span> <span class="text-neutral-700 font-medium">${fmtDur(Date.now() - ms(tm.llmStartedAt))}</span><span class="pulse">\u2026</span>`);
+    const llmEnd = pickEarliestValidEnd(tm.llmStartedAt, tm.llmCompletedAt, tm.completedAt);
+    if (llmEnd) {
+      stats.push(`<span class="text-neutral-500">llm</span> <span class="text-neutral-700 font-medium">${fmtDur(dur(tm.llmStartedAt, llmEnd))}</span>`);
+    } else if (!turnDone) {
+      const llmStartMs = ms(tm.llmStartedAt);
+      const liveLlmDur = llmStartMs == null ? null : Math.max(0, nowMs - llmStartMs);
+      stats.push(`<span class="text-neutral-500">llm</span> <span class="text-neutral-700 font-medium">${fmtDur(liveLlmDur)}</span><span class="pulse">\u2026</span>`);
     }
     if (tm.sentenceCount != null) {
       stats.push(`<span class="text-neutral-700 font-medium">${tm.sentenceCount}</span> <span class="text-neutral-500">sent</span>`);
     }
-    if (tm.completedAt && tm.audioReceivedAt) {
-      stats.push(`<span class="text-neutral-500">total</span> <span class="text-neutral-700 font-medium">${fmtDur(dur(tm.audioReceivedAt, tm.completedAt))}</span>`);
+    const totalStart = pickFirstValidStart(tm.sttStartedAt, tm.audioReceivedAt, tm.llmStartedAt);
+    if (tm.completedAt && totalStart) {
+      stats.push(`<span class="text-neutral-500">total</span> <span class="text-neutral-700 font-medium">${fmtDur(dur(totalStart, tm.completedAt))}</span>`);
     }
     if (stats.length) {
       h += `<div class="px-3 py-0.5 border-b border-neutral-100 flex items-center gap-1.5 text-[10px] justify-end">`;
@@ -562,12 +645,29 @@ function showModal(src) {
   document.getElementById('screenshotModal').classList.remove('hidden');
 }
 
-async function loadTree(id, src) {
+function scrollToTreeNode(elementId) {
+  const el = document.getElementById('tree-node-' + elementId);
+  if (el) {
+    el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    el.classList.add('ring-2', 'ring-amber-400', 'ring-offset-1');
+    setTimeout(() => el.classList.remove('ring-2', 'ring-amber-400', 'ring-offset-1'), 1500);
+  }
+}
+
+async function loadTree(id, src, highlightIds = []) {
   const pre = document.getElementById(id);
   if (!pre || pre.dataset.loaded) return;
   try {
     const r = await fetch(src);
-    pre.textContent = JSON.stringify(await r.json(), null, 2);
+    const tree = await r.json();
+    let html = esc(JSON.stringify(tree, null, 2));
+    highlightIds.forEach(hi => {
+      const safe = hi.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`("id"\\s*:\\s*")(${safe})(")`, 'g');
+      html = html.replace(re, (_, before, val, after) =>
+        `${before}<span id="tree-node-${esc(hi)}" class="bg-amber-100 rounded px-0.5 font-semibold">${esc(val)}</span>${after}`);
+    });
+    pre.innerHTML = html;
     pre.dataset.loaded = 'true';
   } catch { pre.textContent = 'failed to load'; }
 }

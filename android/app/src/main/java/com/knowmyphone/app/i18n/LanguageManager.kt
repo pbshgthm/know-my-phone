@@ -28,6 +28,8 @@ data class AppStrings(
     val language: String,
     val autoShare: String,
     val autoShareSub: String,
+    val serverEndpoint: String,
+    val serverEndpointSub: String,
     val startAssistant: String,
     val resetSession: String,
     val stop: String,

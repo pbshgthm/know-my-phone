@@ -152,6 +152,15 @@ class AssistantViewModel(
         wsClient.connect(serverUrl)
     }
 
+    /**
+     * Disconnect from current server and connect to a new URL.
+     * Used when the user changes the dev/prod endpoint toggle.
+     */
+    fun reconnectToServer(url: String) {
+        disconnect()
+        wsClient.connect(url)
+    }
+
     fun disconnect() {
         wsClient.disconnect()
         _connected.value = false
