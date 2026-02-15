@@ -53,10 +53,10 @@ An Android voice assistant that helps users understand what's on their screen an
 │  │        → Analysis → TTS              │   │
 │  └──────────────────┬───────────────────┘   │
 │                     │                        │
-│  ┌─────────┐ ┌─────┴─────┐ ┌───────────┐  │
-│  │ Whisper │ │ OpenRouter │ │ElevenLabs │  │
-│  │  (STT)  │ │   (LLM)   │ │   (TTS)   │  │
-│  └─────────┘ └───────────┘ └───────────┘  │
+│  ┌───────────┐ ┌─────┴─────┐ ┌───────────┐ │
+│  │ElevenLabs │ │ OpenRouter │ │ElevenLabs │ │
+│  │   (STT)   │ │   (LLM)   │ │   (TTS)   │ │
+│  └───────────┘ └───────────┘ └───────────┘ │
 └──────────────────────────────────────────────┘
 ```
 
@@ -78,9 +78,8 @@ know-your-phone/
 │       ├── protocol.ts           # Message type definitions
 │       ├── prompts.ts            # LLM system prompts (triage + visual analysis)
 │       └── services/
-│           ├── whisper.ts        # OpenAI Whisper STT
 │           ├── openrouter.ts     # OpenRouter LLM (triage + multimodal)
-│           └── elevenlabs.ts     # ElevenLabs TTS
+│           └── elevenlabs.ts     # ElevenLabs STT + TTS
 └── android/
     └── app/src/main/
         ├── AndroidManifest.xml
@@ -169,7 +168,7 @@ Interruption (tap dot to cancel and start new recording):
 ### Backend Flow
 ```
 1. Receive audio_data (WAV)
-2. Whisper STT → transcript text
+2. ElevenLabs STT → transcript text
 3. Send transcript to client
 4. LLM triage (text-only with conversation history)
    a. If needsScreenshot=false → answer + highlights ready
@@ -188,12 +187,12 @@ Interruption (tap dot to cancel and start new recording):
 - **AccessibilityService**: `getRootInActiveWindow()` for UI tree, `takeScreenshot()` for capture
 - **Screenshot bitmap**: Must copy from `HardwareBuffer` to `ARGB_8888` before `compress()`
 - **Audio recording**: 16kHz mono 16-bit PCM on `Dispatchers.IO`
-- **WAV header**: 44-byte header required for Whisper API
+- **WAV header**: 44-byte header is required for backend STT uploads
 
 ### Backend
-- **Whisper**: OpenAI API, accepts WAV audio
+- **STT**: ElevenLabs API (WAV input)
 - **LLM**: OpenRouter API for both text triage and multimodal visual analysis
-- **TTS**: ElevenLabs API, returns MP3 audio
+- **TTS**: ElevenLabs API (MP3 output)
 - **Sessions**: Per-WebSocket-connection conversation history
 
 ## Reliability
@@ -206,12 +205,12 @@ Interruption (tap dot to cancel and start new recording):
 
 ### Cancellation
 - Client sends `{"type":"cancel"}` to abort in-flight requests
-- Backend uses per-session `AbortController` — signals propagate to all API calls (Whisper, OpenRouter, ElevenLabs)
+- Backend uses per-session `AbortController` — signals propagate to all API calls (ElevenLabs STT/TTS and OpenRouter)
 - New audio automatically cancels any previous in-flight request for the same session
 - Server responds with `{"type":"cancelled"}` to acknowledge
 
 ### API Timeouts
-- Whisper STT: 30s
+- ElevenLabs STT: 30s
 - OpenRouter triage: 15s
 - OpenRouter analysis: 30s
 - ElevenLabs TTS: 15s
@@ -235,4 +234,4 @@ Interruption (tap dot to cancel and start new recording):
 - Screenshot compression uses JPEG quality between 60-80
 - Accessibility tree filtering excludes nodes with empty text and content descriptions
 - AudioRecord operations run on background thread
-- Whisper API requires WAV format with 44-byte header (rejects raw PCM)
+- STT upload requires WAV format with 44-byte header (rejects raw PCM)

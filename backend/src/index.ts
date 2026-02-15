@@ -63,9 +63,9 @@ server.listen(PORT, () => {
   console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
   console.log('='.repeat(60));
   console.log(`📋 Environment:`);
-  console.log(`   OPENAI_API_KEY:     ${process.env.OPENAI_API_KEY ? '✓ Set' : '✗ Missing'}`);
   console.log(`   OPENROUTER_API_KEY: ${process.env.OPENROUTER_API_KEY ? '✓ Set' : '✗ Missing'}`);
   console.log(`   ELEVENLABS_API_KEY: ${process.env.ELEVENLABS_API_KEY ? '✓ Set' : '✗ Missing'}`);
+  console.log(`   ELEVENLABS_STT_MODEL_ID: ${process.env.ELEVENLABS_STT_MODEL_ID || 'scribe_v2 (default)'}`);
   console.log('='.repeat(60));
   console.log(`⏳ Waiting for connections...\n`);
 });

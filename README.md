@@ -12,7 +12,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design.
 │   Kotlin    │                    │  Node.js/TS  │
 └─────────────┘                    └──────────────┘
      │                                     │
-     ├─ Overlay UI (pill)                 ├─ Whisper STT
+     ├─ Overlay UI (pill)                 ├─ ElevenLabs STT
      ├─ Audio recording                   ├─ OpenRouter LLM
      ├─ Accessibility tree                └─ ElevenLabs TTS
      └─ Screenshot capture
@@ -35,9 +35,8 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design.
    ```
 
    Required API keys:
-   - `OPENAI_API_KEY` - For Whisper speech-to-text
    - `OPENROUTER_API_KEY` - For LLM inference (default: GPT-5.2, configurable)
-   - `ELEVENLABS_API_KEY` - For text-to-speech
+   - `ELEVENLABS_API_KEY` - For speech-to-text and text-to-speech
    - `ELEVENLABS_VOICE_ID` - Voice ID (default: Rachel)
 
    Optional model configuration:
@@ -184,7 +183,7 @@ The backend maintains conversation context:
 ## API Services
 
 The backend uses two separate API services:
-- **OpenAI API** - Whisper STT (speech recognition)
+- **ElevenLabs API** - STT + TTS (speech recognition and speech synthesis)
 - **OpenRouter API** - LLM inference (text triage and multimodal visual analysis)
 
 The default LLM model is `openai/gpt-5.2`, configurable via `LLM_TEXT_MODEL` and `LLM_VISION_MODEL` environment variables.
@@ -193,7 +192,7 @@ The default LLM model is `openai/gpt-5.2`, configurable via `LLM_TEXT_MODEL` and
 
 ### Backend
 - TypeScript type checking: `npx tsc --noEmit`
-- Whisper API requires 44-byte WAV header
+- Android client sends WAV audio with a 44-byte header for backend STT uploads
 - Default LLM model: `openai/gpt-5.2` (configurable via `LLM_TEXT_MODEL` and `LLM_VISION_MODEL`)
 - Text and vision analysis use the same configurable model
 
@@ -221,9 +220,8 @@ know-your-phone/
 │   │   ├── protocol.ts      # Message types
 │   │   ├── prompts.ts       # LLM system prompts
 │   │   ├── services/
-│   │   │   ├── whisper.ts   # OpenAI Whisper STT
-│   │   │   ├── openrouter.ts # Gemini LLM (triage + vision)
-│   │   │   └── elevenlabs.ts # TTS
+│   │   │   ├── openrouter.ts # OpenRouter LLM (triage + vision)
+│   │   │   └── elevenlabs.ts # ElevenLabs STT + TTS
 │   │   └── __tests__/       # Jest tests
 │   └── package.json
 └── android/

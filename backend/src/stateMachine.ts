@@ -7,9 +7,8 @@ import type {
   UiTree,
 } from "./protocol.js";
 import { addToHistory, getHistoryForLLM } from "./session.js";
-import { transcribeAudio } from "./services/whisper.js";
+import { transcribeAudio, textToSpeech } from "./services/elevenlabs.js";
 import { triageQuery, visualAnalysis, textAnalysis } from "./services/openrouter.js";
-import { textToSpeech } from "./services/elevenlabs.js";
 
 function sendJSON(ws: WebSocket, data: object): void {
   if (ws.readyState === ws.OPEN) {
