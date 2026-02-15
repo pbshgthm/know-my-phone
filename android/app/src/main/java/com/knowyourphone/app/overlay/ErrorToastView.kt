@@ -2,6 +2,7 @@ package com.knowyourphone.app.overlay
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
@@ -11,12 +12,13 @@ import android.widget.TextView
 class ErrorToastView(context: Context, message: String) : FrameLayout(context) {
 
     init {
-        val paddingH = dp(16)
-        val paddingV = dp(8)
+        val paddingH = dp(20)
+        val paddingV = dp(10)
 
         val bg = GradientDrawable().apply {
-            setColor(0xDD333333.toInt())
-            cornerRadius = dp(20).toFloat()
+            setColor(0xF21A1A2E.toInt())
+            cornerRadius = dp(24).toFloat()
+            setStroke(dp(1), 0x18FFFFFF)
         }
         background = bg
 
@@ -24,8 +26,10 @@ class ErrorToastView(context: Context, message: String) : FrameLayout(context) {
             text = message
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             gravity = Gravity.CENTER
             setPadding(paddingH, paddingV, paddingH, paddingV)
+            letterSpacing = 0.01f
         }
 
         addView(textView)

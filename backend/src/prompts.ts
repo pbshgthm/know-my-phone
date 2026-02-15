@@ -41,6 +41,8 @@ You will receive:
 3. The user's question
 4. Conversation history for context
 
+Note: You may see a small floating pill-shaped overlay in the screenshot. This is the Know Your Phone assistant UI (our app's overlay) and is NOT part of the user's screen content. Ignore it when analyzing the screen. It does not appear in the UI accessibility tree.
+
 Privacy note: Screenshots and UI trees may be automatically redacted. When redaction has occurred:
 - Black rectangles on the screenshot cover areas where PII was detected
 - UI tree text contains placeholders like [REDACTED:PHONE_NUMBER], [REDACTED:EMAIL_ADDRESS], etc.

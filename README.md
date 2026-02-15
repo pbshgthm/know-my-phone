@@ -79,8 +79,9 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design.
 
    Alternatively, use the provided script:
    ```bash
-   ./adb-reverse.sh
+   ./adb-reverse start
    ```
+   Use `./adb-reverse stop` to clear all forwarding, or run `./adb-reverse` for a simple start/stop menu.
 
    The app is configured to use `ws://localhost:8765` by default, which works with adb reverse for both emulators and physical devices.
 
@@ -200,7 +201,7 @@ The default LLM model is `openai/gpt-5.2`, configurable via `LLM_TEXT_MODEL` and
 - AccessibilityService must be manually enabled in Settings → Accessibility
 - `getRootInActiveWindow()` returns null during screen transitions
 - Screenshot bitmaps must be copied from `HardwareBuffer` to `ARGB_8888` format before JPEG compression
-- Device connection requires `adb reverse tcp:8765 tcp:8765` for both emulators and physical devices (can be configured via `./adb-reverse.sh`)
+- Device connection requires `adb reverse tcp:8765 tcp:8765` for both emulators and physical devices (can be configured via `./adb-reverse`)
 - Overlay pill uses `FLAG_NOT_FOCUSABLE` to receive touches without stealing focus
 - Highlight overlay uses `FLAG_NOT_TOUCHABLE | FLAG_NOT_FOCUSABLE` for touch passthrough
 - Press-and-hold starts recording; release sends. Drag is disabled while listening.

@@ -12,19 +12,21 @@ import android.graphics.RectF
 import android.util.TypedValue
 import android.view.View
 import android.view.animation.LinearInterpolator
-import android.view.animation.OvershootInterpolator
 import androidx.core.graphics.PathParser
 import com.knowyourphone.app.state.AssistantState
-import kotlin.math.max
 import kotlin.math.pow
 
 class DotView(context: Context) : View(context) {
     companion object {
         const val DOT_SIZE_DP = 68
         private const val PILL_HEIGHT_DP = 48f
+        private const val PILL_WIDTH_DP = 212f
         private const val SHADOW_PAD_DP = 6f
         private const val ICON_SIZE_DP = 20f
-        private const val PILL_MIN_WIDTH_DP = 200f
+        private const val ICON_STROKE_DP = 2f
+        private const val INLINE_TEXT_ICON_SIZE_DP = 14f
+        private const val INLINE_TEXT_ICON_STROKE_DP = 1.35f
+        private const val INLINE_TEXT_ICON_GAP_DP = 4f
 
         private const val COLOR_WHITE = Color.WHITE
         private const val COLOR_ICON = 0xFF1F1F1F.toInt()
@@ -32,10 +34,13 @@ class DotView(context: Context) : View(context) {
         private const val COLOR_BORDER = 0x22000000
         private const val COLOR_DISCONNECTED = 0xFF2B2B2B.toInt()
         private const val COLOR_RECONNECTING = 0xFF5A5A5A.toInt()
+
+        private const val IDLE_TEXT_PREFIX = "Tap"
+        private const val IDLE_TEXT_SUFFIX = "to talk"
     }
 
     enum class ConnectionState { CONNECTED, DISCONNECTED, RECONNECTING }
-    enum class PillAction { X_BUTTON, CONFIRM, NONE }
+    enum class PillAction { MIC_ICON, X_BUTTON, CONFIRM, NONE }
 
     private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -50,7 +55,7 @@ class DotView(context: Context) : View(context) {
 
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dp(2f)
+        strokeWidth = dp(ICON_STROKE_DP)
         color = COLOR_ICON
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
@@ -89,12 +94,12 @@ class DotView(context: Context) : View(context) {
     }
 
     // State-specific circle colors
-    private val circleColorIdle = 0xFF9CA3AF.toInt()
+    private val circleColorIdle = 0xFF4B5563.toInt()
     private val circleColorListening = 0xFF3B82F6.toInt()
     private val circleColorThinking = 0xFF8B5CF6.toInt()
     private val circleColorNeedScreenshot = 0xFF22C55E.toInt()
     private val circleColorSpeaking = 0xFF111827.toInt()
-    private val circleColorX = 0xFFEF4444.toInt()
+    private val circleColorX = 0xFFC7CDD4.toInt()
 
     private var currentState = AssistantState.IDLE
     private var connectionState = ConnectionState.CONNECTED
@@ -114,15 +119,15 @@ class DotView(context: Context) : View(context) {
     private var playbackLevel = 0f
     private val waveformHistory = FloatArray(180) { 0f }
 
-    // Width animation for smooth pill size transitions
+    // Cached fixed width for the pill.
     private var animatedWidth = 0f
-    private var widthAnimator: ValueAnimator? = null
 
     private val tempPath = Path()
     private val tempMatrix = Matrix()
 
     private val xButtonRect = RectF()
     private val confirmRect = RectF()
+    private val micIconRect = RectF()
 
     // Lucide icons (24x24 viewBox)
     private val micPaths: List<Path> = listOf(
@@ -221,17 +226,8 @@ class DotView(context: Context) : View(context) {
     }
 
     private fun computeTargetWidthPx(): Float {
-        val pillHeight = dp(PILL_HEIGHT_DP)
         val shadowPad = dp(SHADOW_PAD_DP)
-
-        val text = statusText()
-        val textWidth = if (text.isNotBlank()) textPaint.measureText(text) else 0f
-
-        // Left: X icon zone (pillHeight) | center: text or eq | right: icon zone (pillHeight)
-        val contentWidth = pillHeight + dp(8f) + textWidth + dp(8f) + pillHeight
-        val minWidth = dp(PILL_MIN_WIDTH_DP)
-        val width = max(contentWidth, minWidth)
-        return width + shadowPad * 2f
+        return dp(PILL_WIDTH_DP) + shadowPad * 2f
     }
 
     fun getDesiredWidthPx(): Int {
@@ -244,24 +240,10 @@ class DotView(context: Context) : View(context) {
 
     private fun animateToTargetWidth() {
         val target = computeTargetWidthPx()
-        val current = if (animatedWidth > 0f) animatedWidth else target
-
-        if (current == target) {
+        if (animatedWidth != target) {
             animatedWidth = target
             requestLayout()
-            return
-        }
-
-        widthAnimator?.cancel()
-        widthAnimator = ValueAnimator.ofFloat(current, target).apply {
-            duration = 200
-            interpolator = OvershootInterpolator(0.8f)
-            addUpdateListener {
-                animatedWidth = it.animatedValue as Float
-                requestLayout()
-                invalidate()
-            }
-            start()
+            invalidate()
         }
     }
 
@@ -269,6 +251,8 @@ class DotView(context: Context) : View(context) {
         return when {
             xButtonRect.contains(x, y) -> PillAction.X_BUTTON
             currentState == AssistantState.NEED_SCREENSHOT && confirmRect.contains(x, y) -> PillAction.CONFIRM
+            (currentState == AssistantState.IDLE || currentState == AssistantState.LISTENING) &&
+                    micIconRect.contains(x, y) -> PillAction.MIC_ICON
             else -> PillAction.NONE
         }
     }
@@ -297,6 +281,7 @@ class DotView(context: Context) : View(context) {
         // --- Left zone: state-specific icon in colored circle ---
         val leftCenterX = rect.left + pillRadius
         confirmRect.setEmpty()
+        micIconRect.setEmpty()
 
         val stateCircleColor = when (currentState) {
             AssistantState.IDLE -> circleColorIdle
@@ -308,10 +293,24 @@ class DotView(context: Context) : View(context) {
 
         when (currentState) {
             AssistantState.IDLE -> {
+                micIconRect.set(rect.left, rect.top, rect.left + pillHeight, rect.bottom)
                 drawIconInCircle(canvas, micPaths, leftCenterX, centerY, ICON_SIZE_DP, 0f, stateCircleColor, filled = true)
             }
             AssistantState.LISTENING -> {
-                drawIconInCircle(canvas, micPaths, leftCenterX, centerY, ICON_SIZE_DP, 0f, stateCircleColor, filled = true)
+                micIconRect.set(rect.left, rect.top, rect.left + pillHeight, rect.bottom)
+                drawIconInCircle(
+                    canvas = canvas,
+                    paths = listOf(
+                        path("M22 2 11 13"),
+                        path("M22 2 15 22 11 13 2 9 22 2z")
+                    ),
+                    cx = leftCenterX,
+                    cy = centerY,
+                    sizeDp = ICON_SIZE_DP,
+                    rotation = 0f,
+                    circleColor = stateCircleColor,
+                    filled = true
+                )
             }
             AssistantState.THINKING -> {
                 drawIconInCircle(canvas, loaderPaths, leftCenterX, centerY, ICON_SIZE_DP, loaderRotation, stateCircleColor, filled = true)
@@ -330,7 +329,7 @@ class DotView(context: Context) : View(context) {
             }
         }
 
-        // --- Right zone: X button in red outline circle ---
+        // --- Right zone: X button in outline circle ---
         val rightCenterX = rect.right - pillRadius
         xButtonRect.set(
             rect.right - pillHeight,
@@ -349,16 +348,20 @@ class DotView(context: Context) : View(context) {
                 drawDynamicEqualizer(canvas, centerZoneLeft, centerZoneRight, centerY)
             }
             else -> {
-                // Text in center
-                val text = statusText()
-                if (text.isNotBlank()) {
-                    val maxTextWidth = centerZoneRight - centerZoneLeft
-                    val displayText = ellipsize(text, maxTextWidth)
-                    val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
-                    // Center the text
-                    val textWidth = textPaint.measureText(displayText)
-                    val textX = centerZoneLeft + (maxTextWidth - textWidth) / 2f
-                    canvas.drawText(displayText, textX, textY, textPaint)
+                if (currentState == AssistantState.IDLE) {
+                    drawIdlePrompt(canvas, centerZoneLeft, centerZoneRight, centerY)
+                } else {
+                    // Text in center
+                    val text = statusText()
+                    if (text.isNotBlank()) {
+                        val maxTextWidth = centerZoneRight - centerZoneLeft
+                        val displayText = ellipsize(text, maxTextWidth)
+                        val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
+                        // Center the text
+                        val textWidth = textPaint.measureText(displayText)
+                        val textX = centerZoneLeft + (maxTextWidth - textWidth) / 2f
+                        canvas.drawText(displayText, textX, textY, textPaint)
+                    }
                 }
             }
         }
@@ -421,28 +424,55 @@ class DotView(context: Context) : View(context) {
         }
     }
 
-    private fun drawIconInCircle(
+    private fun drawIdlePrompt(canvas: Canvas, left: Float, right: Float, centerY: Float) {
+        val maxTextWidth = right - left
+        if (maxTextWidth <= 0f) return
+
+        val prefixWidth = textPaint.measureText(IDLE_TEXT_PREFIX)
+        val suffixWidth = textPaint.measureText(IDLE_TEXT_SUFFIX)
+        val iconSizePx = dp(INLINE_TEXT_ICON_SIZE_DP)
+        val gapPx = dp(INLINE_TEXT_ICON_GAP_DP)
+        val totalWidth = prefixWidth + gapPx + iconSizePx + gapPx + suffixWidth
+
+        if (totalWidth > maxTextWidth) {
+            val fallback = ellipsize("Tap to talk", maxTextWidth)
+            if (fallback.isBlank()) return
+            val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
+            val textX = left + (maxTextWidth - textPaint.measureText(fallback)) / 2f
+            canvas.drawText(fallback, textX, textY, textPaint)
+            return
+        }
+
+        val startX = left + (maxTextWidth - totalWidth) / 2f
+        val textY = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
+        canvas.drawText(IDLE_TEXT_PREFIX, startX, textY, textPaint)
+
+        val iconCenterX = startX + prefixWidth + gapPx + iconSizePx / 2f
+        drawIcon(
+            canvas = canvas,
+            paths = micPaths,
+            cx = iconCenterX,
+            cy = centerY,
+            sizeDp = INLINE_TEXT_ICON_SIZE_DP,
+            rotation = 0f,
+            color = textPaint.color,
+            strokeWidthDp = INLINE_TEXT_ICON_STROKE_DP
+        )
+
+        val suffixX = iconCenterX + iconSizePx / 2f + gapPx
+        canvas.drawText(IDLE_TEXT_SUFFIX, suffixX, textY, textPaint)
+    }
+
+    private fun drawIcon(
         canvas: Canvas,
         paths: List<Path>,
         cx: Float,
         cy: Float,
         sizeDp: Float,
         rotation: Float,
-        circleColor: Int,
-        filled: Boolean,
-        circleRadiusOverride: Float = 0f
+        color: Int,
+        strokeWidthDp: Float = ICON_STROKE_DP
     ) {
-        val circleRadius = if (circleRadiusOverride > 0f) circleRadiusOverride else dp(PILL_HEIGHT_DP) / 2f - dp(4f)
-
-        if (filled) {
-            circlePaint.color = circleColor
-            canvas.drawCircle(cx, cy, circleRadius, circlePaint)
-        } else {
-            circleStrokePaint.color = circleColor
-            canvas.drawCircle(cx, cy, circleRadius, circleStrokePaint)
-        }
-
-        // Draw icon: white on filled circles, circle color on outline circles
         val sizePx = dp(sizeDp)
         val scale = sizePx / 24f
         val left = cx - sizePx / 2f
@@ -450,8 +480,10 @@ class DotView(context: Context) : View(context) {
 
         val savedColor = iconPaint.color
         val savedAlpha = iconPaint.alpha
-        iconPaint.color = if (filled) Color.WHITE else circleColor
+        val savedStrokeWidth = iconPaint.strokeWidth
+        iconPaint.color = color
         iconPaint.alpha = 255
+        iconPaint.strokeWidth = dp(strokeWidthDp)
 
         canvas.save()
         if (rotation != 0f) {
@@ -469,11 +501,45 @@ class DotView(context: Context) : View(context) {
 
         iconPaint.color = savedColor
         iconPaint.alpha = savedAlpha
+        iconPaint.strokeWidth = savedStrokeWidth
+    }
+
+    private fun drawIconInCircle(
+        canvas: Canvas,
+        paths: List<Path>,
+        cx: Float,
+        cy: Float,
+        sizeDp: Float,
+        rotation: Float,
+        circleColor: Int,
+        filled: Boolean,
+        circleRadiusOverride: Float = 0f
+        ) {
+        val circleRadius = if (circleRadiusOverride > 0f) circleRadiusOverride else dp(PILL_HEIGHT_DP) / 2f - dp(4f)
+
+        if (filled) {
+            circlePaint.color = circleColor
+            canvas.drawCircle(cx, cy, circleRadius, circlePaint)
+        } else {
+            circleStrokePaint.color = circleColor
+            canvas.drawCircle(cx, cy, circleRadius, circleStrokePaint)
+        }
+
+        // Draw icon: white on filled circles, circle color on outline circles
+        drawIcon(
+            canvas = canvas,
+            paths = paths,
+            cx = cx,
+            cy = cy,
+            sizeDp = sizeDp,
+            rotation = rotation,
+            color = if (filled) Color.WHITE else circleColor
+        )
     }
 
     private fun statusText(): String {
         return when (currentState) {
-            AssistantState.IDLE -> "Hold to talk"
+            AssistantState.IDLE -> "Tap to talk"
             AssistantState.LISTENING -> ""
             AssistantState.THINKING -> "Thinking..."
             AssistantState.NEED_SCREENSHOT -> "Share screen"
@@ -506,6 +572,5 @@ class DotView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         loaderAnimator.cancel()
-        widthAnimator?.cancel()
     }
 }

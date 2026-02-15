@@ -340,13 +340,14 @@ class AssistantViewModel(
                 _state.value = AssistantState.SPEAKING
 
                 val player = StreamingAudioPlayer()
+                streamingPlayer = player
+                player.start()
+                // Set callback AFTER start() — start() calls stop() which nulls onLevelChanged
                 player.onLevelChanged = { level ->
                     val smoothed = smoothedPlaybackLevel * 0.20f + level * 0.80f
                     smoothedPlaybackLevel = smoothed
                     _playbackLevel.value = smoothed
                 }
-                streamingPlayer = player
-                player.start()
 
                 // Single consumer coroutine writes PCM chunks in order.
                 // All chunks sent before this point are already buffered in channel.
@@ -487,7 +488,6 @@ class AssistantViewModel(
 
     /**
      * Capture screenshot and send to server.
-     * Hides all overlays before capturing to keep them out of the image.
      */
     private fun captureAndSendScreenshot() {
         val accessibility = KypAccessibilityService.instance
@@ -498,21 +498,11 @@ class AssistantViewModel(
         }
 
         scope.launch(Dispatchers.Main) {
-            val overlayService = com.knowyourphone.app.OverlayService.instance
-            // Hide all overlay views so they don't appear in the screenshot
-            overlayService?.setOverlayVisibility(false)
-            // Wait for the views to actually disappear from screen
-            delay(300L)
-
             // Collect UI tree
             val uiTree = accessibility.collectUiTree()
 
-            // Capture screenshot
+            // Capture screenshot (pill overlay stays visible — backend prompt knows to ignore it)
             accessibility.captureScreenshot { bitmap ->
-                // Restore overlay immediately after capture (must run on main thread)
-                scope.launch(Dispatchers.Main) {
-                    overlayService?.setOverlayVisibility(true)
-                }
                 scope.launch(Dispatchers.IO) io@{
                     if (bitmap == null || uiTree == null) {
                         Log.e(TAG, "Failed to capture screenshot or UI tree")

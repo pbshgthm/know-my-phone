@@ -3,9 +3,7 @@ package com.knowyourphone.app.audio
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
-import android.media.audiofx.Visualizer
 import android.util.Log
-import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
@@ -20,7 +18,6 @@ class StreamingAudioPlayer {
 
     @Volatile
     private var audioTrack: AudioTrack? = null
-    private var visualizer: Visualizer? = null
     @Volatile
     private var totalFramesWritten = 0
     @Volatile
@@ -55,7 +52,6 @@ class StreamingAudioPlayer {
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
 
-        setupVisualizer(audioTrack!!.audioSessionId)
         audioTrack!!.play()
         Log.d(TAG, "AudioTrack started (24kHz PCM stream)")
     }
@@ -69,6 +65,7 @@ class StreamingAudioPlayer {
         if (written > 0) {
             // 16-bit mono: each frame is 2 bytes
             totalFramesWritten += written / 2
+            onLevelChanged?.invoke(computePcmLevel(pcmData))
         } else if (written < 0) {
             Log.e(TAG, "AudioTrack.write error: $written")
         }
@@ -107,7 +104,6 @@ class StreamingAudioPlayer {
         onCompletion = null
         onLevelChanged?.invoke(0f)
         onLevelChanged = null
-        releaseVisualizer()
         try {
             audioTrack?.let {
                 it.pause()
@@ -121,62 +117,26 @@ class StreamingAudioPlayer {
         totalFramesWritten = 0
     }
 
-    private fun setupVisualizer(audioSessionId: Int) {
-        if (audioSessionId == 0) return
-        releaseVisualizer()
+    /**
+     * Compute RMS level from 16-bit little-endian PCM samples.
+     * Returns a normalized float in 0..1 range.
+     */
+    private fun computePcmLevel(pcmData: ByteArray): Float {
+        if (pcmData.size < 2) return 0f
 
-        try {
-            visualizer = Visualizer(audioSessionId).apply {
-                enabled = false
-                val captureRange = Visualizer.getCaptureSizeRange()
-                captureSize = captureRange[1]
-                val captureRate = Visualizer.getMaxCaptureRate()
-
-                setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
-                    override fun onWaveFormDataCapture(
-                        visualizer: Visualizer,
-                        waveform: ByteArray,
-                        samplingRate: Int
-                    ) {
-                        onLevelChanged?.invoke(computeWaveformLevel(waveform))
-                    }
-
-                    override fun onFftDataCapture(
-                        visualizer: Visualizer,
-                        fft: ByteArray,
-                        samplingRate: Int
-                    ) {
-                        // Not used
-                    }
-                }, captureRate, true, false)
-
-                enabled = true
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Visualizer unavailable: ${e.message}")
-            releaseVisualizer()
-        }
-    }
-
-    private fun releaseVisualizer() {
-        try { visualizer?.enabled = false } catch (_: Exception) {}
-        try { visualizer?.release() } catch (_: Exception) {}
-        visualizer = null
-    }
-
-    private fun computeWaveformLevel(waveform: ByteArray): Float {
-        if (waveform.isEmpty()) return 0f
-
+        val sampleCount = pcmData.size / 2
         var sumSquares = 0.0
-        var peak = 0.0
-        for (sample in waveform) {
-            val centered = ((sample.toInt() and 0xFF) - 128) / 128.0
-            sumSquares += centered * centered
-            peak = maxOf(peak, abs(centered))
+
+        for (i in 0 until sampleCount) {
+            val low = pcmData[i * 2].toInt() and 0xFF
+            val high = pcmData[i * 2 + 1].toInt()
+            val sample = (high shl 8) or low // 16-bit signed little-endian
+            val normalized = sample / 32768.0
+            sumSquares += normalized * normalized
         }
 
-        val rms = sqrt(sumSquares / waveform.size)
-        val blended = rms * 0.65 + peak * 0.35
-        return (blended * 1.8).coerceIn(0.0, 1.0).toFloat()
+        val rms = sqrt(sumSquares / sampleCount)
+        // Scale up for better visual range (speech RMS is typically 0.02-0.15)
+        return (rms * 4.0).coerceIn(0.0, 1.0).toFloat()
     }
 }

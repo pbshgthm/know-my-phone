@@ -158,12 +158,13 @@ class OverlayService : Service() {
         }
         dotParams = params
 
-        // Touch handler: hold-to-talk, drag, X button, check button
+        // Touch handler: tap-to-record/send, drag, X button, check button
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
         var isDragging = false
+        var pressedAction = DotView.PillAction.NONE
 
         dotView?.setOnTouchListener { _, event ->
             when (event.action) {
@@ -174,37 +175,15 @@ class OverlayService : Service() {
                     initialTouchY = event.rawY
                     isDragging = false
 
-                    val state = viewModel.state.value
-                    // Don't start listening on X region or screenshot confirm region
                     val action = dotView?.hitTestAction(event.x, event.y) ?: DotView.PillAction.NONE
-                    if (action == DotView.PillAction.NONE && state != AssistantState.NEED_SCREENSHOT) {
-                        if (state != AssistantState.LISTENING) {
-                            viewModel.onPressStart()
-                        }
-                    }
+                    pressedAction = action
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val state = viewModel.state.value
-                    // Lock movement while listening (drag cancels) or in non-idle/listening states
-                    if (state == AssistantState.LISTENING) {
-                        val dx = event.rawX - initialTouchX
-                        val dy = event.rawY - initialTouchY
-                        if (!isDragging && (dx * dx + dy * dy > 100)) {
-                            isDragging = true
-                            viewModel.cancelRecordingIfListening()
-                        }
-                        return@setOnTouchListener true
-                    }
-                    if (state != AssistantState.IDLE) {
-                        // Locked in non-idle states (except listening handled above)
-                        return@setOnTouchListener true
-                    }
                     val dx = event.rawX - initialTouchX
                     val dy = event.rawY - initialTouchY
                     if (!isDragging && (dx * dx + dy * dy > 100)) {
                         isDragging = true
-                        viewModel.cancelRecordingIfListening()
                     }
                     if (isDragging) {
                         params.x = initialX + dx.toInt()
@@ -217,6 +196,16 @@ class OverlayService : Service() {
                     if (!isDragging) {
                         val action = dotView?.hitTestAction(event.x, event.y) ?: DotView.PillAction.NONE
                         when (action) {
+                            DotView.PillAction.MIC_ICON -> {
+                                if (pressedAction == DotView.PillAction.MIC_ICON) {
+                                    val state = viewModel.state.value
+                                    if (state == AssistantState.LISTENING) {
+                                        viewModel.onPressEnd()
+                                    } else if (state != AssistantState.NEED_SCREENSHOT) {
+                                        viewModel.onPressStart()
+                                    }
+                                }
+                            }
                             DotView.PillAction.X_BUTTON -> {
                                 if (viewModel.state.value == AssistantState.IDLE) {
                                     // Hide pill, stop service
@@ -228,17 +217,14 @@ class OverlayService : Service() {
                             DotView.PillAction.CONFIRM -> {
                                 viewModel.onScreenshotConfirm()
                             }
-                            DotView.PillAction.NONE -> {
-                                viewModel.onPressEnd()
-                            }
+                            DotView.PillAction.NONE -> { /* no-op */ }
                         }
                     }
+                    pressedAction = DotView.PillAction.NONE
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    if (!isDragging && viewModel.state.value != AssistantState.NEED_SCREENSHOT) {
-                        viewModel.onPressEnd()
-                    }
+                    pressedAction = DotView.PillAction.NONE
                     true
                 }
                 else -> false
