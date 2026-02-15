@@ -312,7 +312,7 @@ export async function handleAudioReceived(
     });
 
     if (triage.needsScreenshot) {
-      // Store pending request with TTL and ask client for screenshot
+      // Set up pending screenshot entry (60s timeout)
       const timer = setTimeout(() => {
         if (pendingScreenshots.has(session.id)) {
           pendingScreenshots.delete(session.id);
@@ -327,15 +327,40 @@ export async function handleAudioReceived(
         timer,
       });
 
-      console.log(`[${session.id}] Requesting screenshot from client`);
+      console.log(`[${session.id}] Triage needs screenshot — TTS-streaming spoken request`);
       saveTiming(session.clientId, session.conversationId, turnId, { timing: { screenshotRequestedAt: new Date().toISOString() } });
+
+      // TTS the spoken request and stream as answer_start → PCM → answer_end
+      const spokenText = stripAudioTags(triage.spokenRequest || "Let me take a look at your screen to help you with that.");
+      const confirmLabel = triage.confirmLabel || "Share screen";
+
+      sendJSON(ws, { type: "answer_start" });
+      try {
+        for await (const pcmChunk of streamTextToSpeech(spokenText, session.languageCode, signal)) {
+          if (signal.aborted) throw new Error("AbortError");
+          sendBinary(ws, pcmChunk);
+        }
+      } catch (err) {
+        if ((err as Error).name === "AbortError" || (err as Error).message === "AbortError") {
+          console.log(`[${session.id}] Triage TTS aborted`);
+          return;
+        }
+        console.error(`[${session.id}] Triage TTS failed:`, err);
+      }
+
+      // Add spoken request to conversation history
+      session.lastMessageTimestamp = Date.now();
+      addToHistory(session, "user", transcript);
+      addToHistory(session, "assistant", spokenText);
+
       sendJSON(ws, {
-        type: "screenshot_request",
-        text: "",
-        reason: triage.reason,
-        hasAudio: false,
+        type: "answer_end",
+        text: spokenText,
+        highlights: [],
+        hasNextStep: true,
+        confirmLabel,
       });
-      console.log(`[${session.id}] Waiting for screenshot response...\n`);
+      console.log(`[${session.id}] Waiting for screenshot response (confirmLabel="${confirmLabel}")...\n`);
       return;
     }
 
@@ -500,6 +525,8 @@ async function streamAnswerToClient(
   let streamingStarted = false;
   let firstTokenRecorded = false;
   let firstAudioRecorded = false;
+  let answerStartTime = 0;
+  let highlightsSentDuringSpeech = false;
   const pcmChunks: Buffer[] = [];
 
   /** Send answer_start right before the first PCM chunk, so the client
@@ -511,8 +538,21 @@ async function streamAnswerToClient(
         saveTiming(session.clientId, convId, turnId, { timing: { ttsFirstAudioAt: new Date().toISOString() } });
       }
       sendJSON(ws, { type: "answer_start" });
+      answerStartTime = Date.now();
       streamingStarted = true;
     }
+  }
+
+  /** Check and send highlights during speech if available and 2s elapsed */
+  function trySendEarlyHighlights(): void {
+    if (highlightsSentDuringSpeech) return;
+    if (!streamingStarted || answerStartTime === 0) return;
+    const earlyHighlights = parser.getEarlyHighlights();
+    if (!earlyHighlights || earlyHighlights.length === 0) return;
+    if (Date.now() - answerStartTime < 2000) return;
+    highlightsSentDuringSpeech = true;
+    sendJSON(ws, { type: "highlights", highlights: earlyHighlights });
+    console.log(`[${session.id}] Sent ${earlyHighlights.length} highlights during speech`);
   }
 
   try {
@@ -526,6 +566,7 @@ async function streamAnswerToClient(
       }
 
       const sentences = parser.feed(chunk);
+      trySendEarlyHighlights();
 
       for (const sentence of sentences) {
         const clean = stripAudioTags(sentence);
@@ -538,6 +579,7 @@ async function streamAnswerToClient(
           ensureStreamStarted();
           pcmChunks.push(pcmChunk);
           sendBinary(ws, pcmChunk);
+          trySendEarlyHighlights();
         }
       }
     }
@@ -557,14 +599,17 @@ async function streamAnswerToClient(
           ensureStreamStarted();
           pcmChunks.push(pcmChunk);
           sendBinary(ws, pcmChunk);
+          trySendEarlyHighlights();
         }
       }
     }
 
-    // Parse full JSON for highlights
+    // Parse full JSON for highlights and nextStep
     const rawOutput = parser.getRawOutput();
     let cleanAnswer = "";
     let highlights: Array<{ elementId: string; label: string }> = [];
+    let nextStep = false;
+    let confirmLabel = "";
     try {
       let cleaned = rawOutput.trim();
       if (cleaned.startsWith("```")) {
@@ -573,6 +618,8 @@ async function streamAnswerToClient(
       const parsed = JSON.parse(cleaned) as AnalysisResult;
       cleanAnswer = stripAudioTags(parsed.answer);
       highlights = parsed.highlights || [];
+      nextStep = parsed.nextStep || false;
+      confirmLabel = parsed.confirmLabel || "";
     } catch {
       // If JSON parse fails, use the extracted answer text
       cleanAnswer = stripAudioTags(parser.flush() || rawOutput);
@@ -587,7 +634,7 @@ async function streamAnswerToClient(
 
     // Save timing data
     saveTiming(session.clientId, convId, turnId, {
-      output: { text: cleanAnswer, highlights },
+      output: { text: cleanAnswer, highlights, nextStep, confirmLabel },
       timing: { sentenceCount, completedAt: new Date().toISOString() },
     });
 
@@ -598,9 +645,35 @@ async function streamAnswerToClient(
         .catch((err) => console.error(`[DataStore] Failed to save audio output:`, err));
     }
 
-    // Send answer_end with text and highlights
-    sendJSON(ws, { type: "answer_end", text: cleanAnswer, highlights });
-    console.log(`[${session.id}] Streaming complete! ${sentenceCount} sentences sent`);
+    // When nextStep is true, create a pending screenshot entry so backend is
+    // ready for the follow-up screenshot_response from the ✓ button
+    if (nextStep) {
+      const timer = setTimeout(() => {
+        if (pendingScreenshots.has(session.id)) {
+          pendingScreenshots.delete(session.id);
+          console.warn(`[${session.id}] Next-step screenshot timed out after 60s`);
+        }
+      }, 60_000);
+
+      pendingScreenshots.set(session.id, {
+        userText,
+        reason: "next-step confirmation",
+        timer,
+      });
+    }
+
+    // Send answer_end with text, highlights, and next-step info
+    const answerEnd: Record<string, unknown> = {
+      type: "answer_end",
+      text: cleanAnswer,
+      highlights,
+    };
+    if (nextStep) {
+      answerEnd.hasNextStep = true;
+      answerEnd.confirmLabel = confirmLabel;
+    }
+    sendJSON(ws, answerEnd);
+    console.log(`[${session.id}] Streaming complete! ${sentenceCount} sentences sent${nextStep ? ` (nextStep, label="${confirmLabel}")` : ""}`);
   } catch (err) {
     if ((err as Error).name === "AbortError" || (err as Error).message === "AbortError") {
       console.log(`[${session.id}] Streaming pipeline aborted`);

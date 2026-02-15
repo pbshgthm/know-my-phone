@@ -216,7 +216,7 @@ class OverlayService : Service() {
                                     val state = viewModel.state.value
                                     if (state == AssistantState.LISTENING) {
                                         viewModel.onPressEnd()
-                                    } else if (state != AssistantState.NEED_SCREENSHOT) {
+                                    } else if (state != AssistantState.CONFIRMING) {
                                         viewModel.onPressStart()
                                     }
                                 }
@@ -305,6 +305,17 @@ class OverlayService : Service() {
                 if (state != AssistantState.IDLE) {
                     dismissContextMenu()
                 }
+                // Hide highlight overlay when entering CONFIRMING (prevents overlay permission issues)
+                if (state == AssistantState.CONFIRMING) {
+                    highlightView?.clear()
+                    highlightView?.visibility = View.GONE
+                }
+            }
+        }
+
+        scope.launch {
+            viewModel.confirmLabel.collect { label ->
+                dotView?.setConfirmLabel(label)
             }
         }
 

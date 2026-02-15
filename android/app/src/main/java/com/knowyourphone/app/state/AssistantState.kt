@@ -5,5 +5,5 @@ enum class AssistantState {
     LISTENING,
     THINKING,
     SPEAKING,
-    NEED_SCREENSHOT
+    CONFIRMING
 }

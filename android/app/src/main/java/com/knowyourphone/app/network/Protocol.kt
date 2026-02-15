@@ -68,7 +68,7 @@ sealed class ServerMessage {
     data class ScreenshotRequest(val text: String, val reason: String, val hasAudio: Boolean) : ServerMessage()
     object AnswerStart : ServerMessage()
     data class Highlights(val highlights: List<HighlightTarget>) : ServerMessage()
-    data class AnswerEnd(val text: String, val highlights: List<HighlightTarget>) : ServerMessage()
+    data class AnswerEnd(val text: String, val highlights: List<HighlightTarget>, val hasNextStep: Boolean = false, val confirmLabel: String = "") : ServerMessage()
     data class Error(val message: String) : ServerMessage()
     object Cancelled : ServerMessage()
 }
@@ -108,7 +108,9 @@ object MessageParser {
                     }
                     ServerMessage.AnswerEnd(
                         text = obj.get("text")?.asString ?: "",
-                        highlights = highlights
+                        highlights = highlights,
+                        hasNextStep = obj.get("hasNextStep")?.asBoolean ?: false,
+                        confirmLabel = obj.get("confirmLabel")?.asString ?: ""
                     )
                 }
                 "error" -> ServerMessage.Error(

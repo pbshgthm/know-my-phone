@@ -61,6 +61,8 @@ class DotView(context: Context) : View(context) {
         idlePrompt = "Tap {mic} to ask"
     )
 
+    private var confirmLabelText: String = ""
+
     private val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
@@ -111,8 +113,8 @@ class DotView(context: Context) : View(context) {
     private val circleColorListeningEdge = 0xFF2563EB.toInt()
     private val circleColorThinkingCenter = 0xFFA78BFA.toInt()
     private val circleColorThinkingEdge = 0xFF7C3AED.toInt()
-    private val circleColorNeedScreenshotCenter = 0xFF34D399.toInt()
-    private val circleColorNeedScreenshotEdge = 0xFF16A34A.toInt()
+    private val circleColorConfirmingCenter = 0xFF34D399.toInt()
+    private val circleColorConfirmingEdge = 0xFF16A34A.toInt()
     private val circleColorSpeakingCenter = 0xFF6366F1.toInt()
     private val circleColorSpeakingEdge = 0xFF4338CA.toInt()
     private val circleColorOfflineCenter = 0xFF9CA3AF.toInt()
@@ -285,6 +287,14 @@ class DotView(context: Context) : View(context) {
         invalidate()
     }
 
+    fun setConfirmLabel(label: String) {
+        confirmLabelText = label
+        if (currentState == AssistantState.CONFIRMING) {
+            animateToTargetWidth()
+            invalidate()
+        }
+    }
+
     private fun computeTargetWidthPx(): Float {
         val shadowPad = dp(SHADOW_PAD_DP)
         val pillHeight = dp(PILL_HEIGHT_DP)
@@ -343,7 +353,8 @@ class DotView(context: Context) : View(context) {
     private fun measureFixedCenterContentWidth(): Float {
         val idlePromptWidth = measureIdlePromptWidth(textPaint.textSize, includeIcon = true)
         val thinkingWidth = textPaint.measureText(pillStrings.thinking.trim())
-        val screenshotWidth = textPaint.measureText(pillStrings.shareScreen.trim())
+        val confirmText = confirmLabelText.ifEmpty { pillStrings.shareScreen }
+        val screenshotWidth = textPaint.measureText(confirmText.trim())
         val waveformWidth = dp(92f)
         return maxOf(idlePromptWidth, thinkingWidth, screenshotWidth, waveformWidth)
     }
@@ -353,7 +364,7 @@ class DotView(context: Context) : View(context) {
             xButtonRect.contains(x, y) -> {
                 if (currentState == AssistantState.IDLE) PillAction.MENU_BUTTON else PillAction.X_BUTTON
             }
-            currentState == AssistantState.NEED_SCREENSHOT && confirmRect.contains(x, y) -> PillAction.CONFIRM
+            currentState == AssistantState.CONFIRMING && confirmRect.contains(x, y) -> PillAction.CONFIRM
             (currentState == AssistantState.IDLE || currentState == AssistantState.LISTENING) &&
                     micIconRect.contains(x, y) -> PillAction.MIC_ICON
             else -> PillAction.NONE
@@ -423,7 +434,7 @@ class DotView(context: Context) : View(context) {
             AssistantState.IDLE -> circleColorIdleCenter to circleColorIdleEdge
             AssistantState.LISTENING -> circleColorListeningCenter to circleColorListeningEdge
             AssistantState.THINKING -> circleColorThinkingCenter to circleColorThinkingEdge
-            AssistantState.NEED_SCREENSHOT -> circleColorNeedScreenshotCenter to circleColorNeedScreenshotEdge
+            AssistantState.CONFIRMING -> circleColorConfirmingCenter to circleColorConfirmingEdge
             AssistantState.SPEAKING -> circleColorSpeakingCenter to circleColorSpeakingEdge
         }
         val (centerColor, edgeColor) = if (connectionState == ConnectionState.CONNECTED) {
@@ -448,7 +459,7 @@ class DotView(context: Context) : View(context) {
             AssistantState.THINKING -> {
                 drawGradientCircleWithIcon(canvas, loaderPaths, leftCenterX, centerY, circleRadius, ICON_SIZE_DP, loaderRotation, centerColor, edgeColor)
             }
-            AssistantState.NEED_SCREENSHOT -> {
+            AssistantState.CONFIRMING -> {
                 confirmRect.set(rect.left, rect.top, rect.left + pillHeight, rect.bottom)
                 drawGradientCircleWithIcon(canvas, checkPaths, leftCenterX, centerY, circleRadius, ICON_SIZE_DP, 0f, centerColor, edgeColor)
             }
@@ -851,7 +862,7 @@ class DotView(context: Context) : View(context) {
             }
             AssistantState.LISTENING -> ""
             AssistantState.THINKING -> "" // handled by drawThinkingText
-            AssistantState.NEED_SCREENSHOT -> pillStrings.shareScreen
+            AssistantState.CONFIRMING -> confirmLabelText.ifEmpty { pillStrings.shareScreen }
             AssistantState.SPEAKING -> ""
         }
     }

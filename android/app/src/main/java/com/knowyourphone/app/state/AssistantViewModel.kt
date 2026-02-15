@@ -44,6 +44,9 @@ class AssistantViewModel(
     private val _screenshotReason = MutableStateFlow("")
     val screenshotReason: StateFlow<String> = _screenshotReason
 
+    private val _confirmLabel = MutableStateFlow("")
+    val confirmLabel: StateFlow<String> = _confirmLabel
+
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected
 
@@ -155,7 +158,7 @@ class AssistantViewModel(
      * Press-and-hold start.
      * IDLE -> start listening
      * THINKING/SPEAKING -> cancel and start listening
-     * NEED_SCREENSHOT -> no-op (X button handles cancel)
+     * CONFIRMING -> no-op (X button handles cancel)
      */
     fun onPressStart() {
         when (_state.value) {
@@ -173,7 +176,7 @@ class AssistantViewModel(
                 smoothedPlaybackLevel = 0f
                 startListening()
             }
-            AssistantState.NEED_SCREENSHOT -> {
+            AssistantState.CONFIRMING -> {
                 // No-op: X button handles screenshot cancel
             }
         }
@@ -227,8 +230,7 @@ class AssistantViewModel(
                 smoothedPlaybackLevel = 0f
                 _state.value = AssistantState.IDLE
             }
-            AssistantState.NEED_SCREENSHOT -> {
-                promptPlayer.stop()
+            AssistantState.CONFIRMING -> {
                 sendCancel()
                 _state.value = AssistantState.IDLE
             }
@@ -378,9 +380,11 @@ class AssistantViewModel(
 
         // AnswerEnd: streaming complete — finalize playback
         if (message is ServerMessage.AnswerEnd) {
-            Log.d(TAG, "AnswerEnd: text=${message.text.take(50)}, highlights=${message.highlights.size}")
+            Log.d(TAG, "AnswerEnd: text=${message.text.take(50)}, highlights=${message.highlights.size}, hasNextStep=${message.hasNextStep}")
             streamingAudio = false
             pendingHighlights = message.highlights
+            val hasNextStep = message.hasNextStep
+            val endConfirmLabel = message.confirmLabel
 
             scope.launch(Dispatchers.Main) {
                 // Close the channel so the consumer finishes
@@ -394,45 +398,48 @@ class AssistantViewModel(
                 if (player != null) {
                     player.onCompletion = {
                         scope.launch(Dispatchers.Main) {
-                            // Show highlights after audio playback completes
-                            if (pendingHighlights.isNotEmpty()) {
-                                _highlights.value = pendingHighlights
-                                scheduleHighlightDismiss()
-                            }
                             _inputLevel.value = 0f
                             smoothedInputLevel = 0f
                             _playbackLevel.value = 0f
                             smoothedPlaybackLevel = 0f
-                            _state.value = AssistantState.IDLE
+
+                            if (hasNextStep) {
+                                // Hide highlights, show CONFIRMING with dynamic label
+                                _highlights.value = emptyList()
+                                highlightDismissJob?.cancel()
+                                _confirmLabel.value = endConfirmLabel
+                                _state.value = AssistantState.CONFIRMING
+                            } else {
+                                // Dismiss highlights 1s after speech ends
+                                if (pendingHighlights.isNotEmpty() && _highlights.value.isEmpty()) {
+                                    _highlights.value = pendingHighlights
+                                }
+                                scheduleHighlightDismiss()
+                                _state.value = AssistantState.IDLE
+                            }
                             streamingPlayer = null
                         }
                     }
                     player.finish()
                 } else {
                     // No player (answer_end without answer_start = text-only error recovery)
-                    if (pendingHighlights.isNotEmpty()) {
-                        _highlights.value = pendingHighlights
-                        scheduleHighlightDismiss()
-                    }
                     _inputLevel.value = 0f
                     smoothedInputLevel = 0f
                     _playbackLevel.value = 0f
                     smoothedPlaybackLevel = 0f
-                    _state.value = AssistantState.IDLE
-                }
-            }
-            return
-        }
 
-        // ScreenshotRequest: always transitions to NEED_SCREENSHOT
-        if (message is ServerMessage.ScreenshotRequest) {
-            Log.d(TAG, "Screenshot request: ${message.reason}")
-            _screenshotReason.value = message.reason
-            scope.launch(Dispatchers.Main) {
-                _state.value = AssistantState.NEED_SCREENSHOT
-                // Play voice prompt when manual screenshot mode (auto-screenshot off)
-                if (!_autoScreenshot.value) {
-                    promptPlayer.play(R.raw.share_screen)
+                    if (hasNextStep) {
+                        _highlights.value = emptyList()
+                        highlightDismissJob?.cancel()
+                        _confirmLabel.value = endConfirmLabel
+                        _state.value = AssistantState.CONFIRMING
+                    } else {
+                        if (pendingHighlights.isNotEmpty()) {
+                            _highlights.value = pendingHighlights
+                        }
+                        scheduleHighlightDismiss()
+                        _state.value = AssistantState.IDLE
+                    }
                 }
             }
             return
@@ -448,13 +455,26 @@ class AssistantViewModel(
                 is ServerMessage.NeedScreenshot -> {
                     Log.d(TAG, "Need screenshot: ${message.reason}")
                     _screenshotReason.value = message.reason
-                    _state.value = AssistantState.NEED_SCREENSHOT
+                    _state.value = AssistantState.CONFIRMING
+                }
+
+                is ServerMessage.ScreenshotRequest -> {
+                    // Legacy: still handle if backend sends old format
+                    Log.d(TAG, "Screenshot request (legacy): ${message.reason}")
+                    _screenshotReason.value = message.reason
+                    _confirmLabel.value = ""
+                    _state.value = AssistantState.CONFIRMING
                 }
 
                 is ServerMessage.AnswerStart -> { /* handled above */ }
-                is ServerMessage.Highlights -> { /* no-op: highlights come via answer_end */ }
+                is ServerMessage.Highlights -> {
+                    // Show highlights during speech
+                    if (_state.value == AssistantState.SPEAKING && message.highlights.isNotEmpty()) {
+                        Log.d(TAG, "Highlights during speech: ${message.highlights.size}")
+                        _highlights.value = message.highlights
+                    }
+                }
                 is ServerMessage.AnswerEnd -> { /* handled above */ }
-                is ServerMessage.ScreenshotRequest -> { /* handled above */ }
 
                 is ServerMessage.Error -> {
                     Log.e(TAG, "Server error: ${message.message}")
@@ -495,7 +515,7 @@ class AssistantViewModel(
     private fun scheduleHighlightDismiss() {
         highlightDismissJob?.cancel()
         highlightDismissJob = scope.launch {
-            delay(10_000)
+            delay(1_000)
             _highlights.value = emptyList()
         }
     }
@@ -504,7 +524,6 @@ class AssistantViewModel(
      * User confirmed screenshot. Capture and send.
      */
     fun onScreenshotConfirm() {
-        promptPlayer.stop()
         _state.value = AssistantState.THINKING
         captureAndSendScreenshot()
     }
@@ -587,15 +606,13 @@ class AssistantViewModel(
     }
 
     /**
-     * User declined screenshot.
+     * User declined screenshot / dismissed confirmation.
+     * Goes to IDLE so user can press mic to talk.
      */
     fun onScreenshotDecline() {
-        _state.value = AssistantState.THINKING
         val msg = ScreenshotDeclinedMessage()
-        val sent = wsClient.sendText(MessageParser.toJson(msg))
-        if (!sent) {
-            _state.value = AssistantState.IDLE
-        }
+        wsClient.sendText(MessageParser.toJson(msg))
+        _state.value = AssistantState.IDLE
     }
 
     fun setLanguage(code: String) {

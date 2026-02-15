@@ -121,6 +121,8 @@ export interface AnswerEndMessage {
   type: "answer_end";
   text: string;
   highlights: Highlight[];
+  hasNextStep?: boolean;
+  confirmLabel?: string;
 }
 
 export type ServerMessage =
@@ -162,6 +164,8 @@ export interface UiTree {
 export interface TriageResult {
   needsScreenshot: boolean;
   reason: string;
+  spokenRequest?: string;
+  confirmLabel?: string;
 }
 
 // Visual analysis result from LLM
@@ -169,4 +173,6 @@ export interface TriageResult {
 export interface AnalysisResult {
   answer: string;
   highlights: Highlight[];
+  nextStep?: boolean;
+  confirmLabel?: string;
 }

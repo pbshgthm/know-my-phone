@@ -106,7 +106,7 @@ export async function triageQuery(
   signal?: AbortSignal,
   autoScreenshot: boolean = false,
   deviceInfo?: DeviceInfo
-): Promise<{ needsScreenshot: boolean; reason: string }> {
+): Promise<{ needsScreenshot: boolean; reason: string; spokenRequest?: string; confirmLabel?: string }> {
   const messages: ChatMessage[] = [
     { role: "system", content: getTriagePrompt(autoScreenshot, deviceInfo) },
     ...conversationHistory.map((h) => ({
@@ -117,10 +117,12 @@ export async function triageQuery(
   ];
 
   const raw = await chatCompletion(messages, TEXT_MODEL, 15_000, signal);
-  const parsed = parseJSON<{ needsScreenshot: boolean; reason: string }>(raw);
+  const parsed = parseJSON<{ needsScreenshot: boolean; reason: string; spokenRequest?: string; confirmLabel?: string }>(raw);
   return {
     needsScreenshot: parsed.needsScreenshot,
     reason: parsed.reason,
+    spokenRequest: parsed.spokenRequest,
+    confirmLabel: parsed.confirmLabel,
   };
 }
 

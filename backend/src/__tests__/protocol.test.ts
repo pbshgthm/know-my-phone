@@ -80,6 +80,17 @@ describe('Protocol Message Types', () => {
     expect(answerEnd.highlights[0].bounds).toBeDefined();
     expect(answerEnd.highlights[1].bounds).toBeUndefined();
 
+    // AnswerEnd with nextStep fields
+    const answerEndWithNextStep: AnswerEndMessage = {
+      type: 'answer_end',
+      text: 'Tap Settings, then I\'ll check',
+      highlights: [highlightWithBounds],
+      hasNextStep: true,
+      confirmLabel: 'Done?',
+    };
+    expect(answerEndWithNextStep.hasNextStep).toBe(true);
+    expect(answerEndWithNextStep.confirmLabel).toBe('Done?');
+
     const error: ErrorMessage = {
       type: 'error',
       message: 'Something went wrong',
