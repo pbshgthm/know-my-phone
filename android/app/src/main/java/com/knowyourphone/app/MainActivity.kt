@@ -440,8 +440,8 @@ class MainActivity : AppCompatActivity() {
         accessibilityGrantBtn.text = s.grant
         stopBtn.text = s.stop
 
-        // Update start/reset button
-        startResetBtn.text = if (OverlayService.instance != null) s.resetSession else s.startAssistant
+        // Update start button
+        startResetBtn.text = s.startAssistant
         applyLanguageTypography()
     }
 
@@ -534,7 +534,7 @@ class MainActivity : AppCompatActivity() {
 
         // Update button text based on service state
         val s = LanguageManager.getAppStrings(selectedLanguageCode)
-        startResetBtn.text = if (OverlayService.instance != null) s.resetSession else s.startAssistant
+        startResetBtn.text = s.startAssistant
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -562,9 +562,6 @@ class MainActivity : AppCompatActivity() {
 
         if (OverlayService.instance == null) {
             OverlayService.start(this)
-        } else {
-            OverlayService.instance?.resetSession()
-            showSnackbar(s.sessionReset)
         }
 
         moveTaskToBack(true)

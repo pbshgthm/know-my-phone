@@ -25,10 +25,6 @@ export interface HelloMessage {
   clientId?: string;
 }
 
-export interface ResetSessionMessage {
-  type: "reset_session";
-}
-
 export interface SetLanguageMessage {
   type: "set_language";
   languageCode: string;
@@ -64,7 +60,6 @@ export interface SetAutoScreenshotMessage {
 export type ClientMessage =
   | AudioDataMessage
   | HelloMessage
-  | ResetSessionMessage
   | SetLanguageMessage
   | ScreenshotResponseMessage
   | ScreenshotDeclinedMessage
@@ -155,4 +150,5 @@ export interface TriageResult {
 export interface AnalysisResult {
   answer: string;
   highlights: Highlight[];
+  conversationStatus?: "NEW" | "CONTINUE";
 }

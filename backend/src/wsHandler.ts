@@ -4,7 +4,6 @@ import {
   createSession,
   deleteSession,
   getOrCreateSession,
-  resetSession,
   type Session,
 } from "./session.js";
 import type { ScreenshotResponseMessage } from "./protocol.js";
@@ -123,20 +122,9 @@ function handleMessage(
         console.log(`[WS] 🔑 Bound to clientId=${clientId}, sessionId=${sessionId}`);
       }
       // Initialize conversation data on disk
-      initConversation(clientId, sessionId, state.session.languageCode).catch((err) => {
+      initConversation(clientId, state.session.conversationId, state.session.languageCode).catch((err) => {
         console.error(`[WS] ❌ Failed to init conversation on disk:`, err);
       });
-      break;
-    }
-
-    case "reset_session": {
-      if (!state.sessionId) {
-        ws.send(JSON.stringify({ type: "error", message: "No session; send hello first" }));
-        return;
-      }
-      cleanupSession(state.session.id);
-      state.session = resetSession(state.sessionId, state.session.languageCode);
-      console.log(`[WS] 🔄 Session reset: ${state.sessionId}`);
       break;
     }
 

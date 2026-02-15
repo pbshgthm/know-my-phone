@@ -110,10 +110,6 @@ class OverlayService : Service() {
         Log.d(TAG, "Overlay service destroyed")
     }
 
-    fun resetSession() {
-        viewModel.resetSession()
-    }
-
     fun setLanguage(languageCode: String) {
         viewModel.setLanguage(languageCode)
         dotView?.setLanguageStrings(languageCode, LanguageManager.getPillStrings(languageCode))
@@ -262,7 +258,6 @@ class OverlayService : Service() {
 
     private fun hideOverlay() {
         dismissContextMenu()
-        viewModel.resetSession()
         stopSelf()
     }
 

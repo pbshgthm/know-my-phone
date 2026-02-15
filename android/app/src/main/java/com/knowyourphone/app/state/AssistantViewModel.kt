@@ -581,24 +581,6 @@ class AssistantViewModel(
         }
     }
 
-    fun resetSession() {
-        sendCancel()
-        stopStreamingPlayer()
-        // Generate a fresh session ID
-        sessionId = UUID.randomUUID().toString()
-        wsClient.sendText(MessageParser.toJson(ResetSessionMessage()))
-        sendHello()
-        sendLanguage()
-        pendingHighlights = emptyList()
-
-        _inputLevel.value = 0f
-        smoothedInputLevel = 0f
-        _playbackLevel.value = 0f
-        smoothedPlaybackLevel = 0f
-        _highlights.value = emptyList()
-        _state.value = AssistantState.IDLE
-    }
-
     fun setLanguage(code: String) {
         languageCode = code
         context.getSharedPreferences("kyp_prefs", Context.MODE_PRIVATE)

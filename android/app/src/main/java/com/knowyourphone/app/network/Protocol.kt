@@ -20,10 +20,6 @@ data class HelloMessage(
     val clientId: String? = null
 )
 
-data class ResetSessionMessage(
-    val type: String = "reset_session"
-)
-
 data class SetLanguageMessage(
     val type: String = "set_language",
     val languageCode: String
